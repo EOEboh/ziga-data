@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SheetDrop</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    max-width: 640px; margin: 3rem auto; padding: 0 1rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.5rem; }
+  p.sub { color: gray; margin-top: -0.5rem; }
+  textarea {
+    width: 100%; min-height: 160px; padding: 0.6rem;
+    font: inherit; box-sizing: border-box; border-radius: 6px;
+    border: 1px solid #999;
+  }
+  .row { display: flex; gap: 0.75rem; align-items: center; margin: 0.75rem 0; flex-wrap: wrap; }
+  button {
+    padding: 0.55rem 1.4rem; font: inherit; border-radius: 6px;
+    border: none; background: #1a7f37; color: white; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  #imgpreview { max-height: 80px; border-radius: 4px; display: none; }
+  #clearimg { display: none; background: #888; padding: 0.3rem 0.7rem; }
+  #status { margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 6px; display: none; white-space: pre-wrap; }
+  #status.ok      { display: block; background: #dafbe1; color: #116329; }
+  #status.warn    { display: block; background: #fff8c5; color: #7d4e00; }
+  #status.err     { display: block; background: #ffebe9; color: #a40e26; }
+  @media (prefers-color-scheme: dark) {
+    #status.ok   { background: #12351e; color: #7ee2a8; }
+    #status.warn { background: #3a2d00; color: #f0d977; }
+    #status.err  { background: #4a1015; color: #ff9b8f; }
+  }
+  table { border-collapse: collapse; margin-top: 0.8rem; width: 100%; font-size: 0.9rem; }
+  td { padding: 0.25rem 0.5rem; border-bottom: 1px solid rgba(128,128,128,.3); vertical-align: top; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>📥 SheetDrop</h1>
+<p class="sub">Paste lead info (text, forwarded email) or attach/paste a screenshot. It'll be extracted and added to your Google Sheet.</p>
+
+<textarea id="text" placeholder="Paste the lead text here… (or paste a screenshot with Ctrl/Cmd+V)"></textarea>
+<div class="row">
+  <input type="file" id="image" accept="image/png,image/jpeg,image/webp,image/gif">
+  <img id="imgpreview" alt="attached image preview">
+  <button id="clearimg" type="button">✕ remove image</button>
+</div>
+<div class="row">
+  <button id="submit">Extract &amp; add to sheet</button>
+</div>
+<div id="status"></div>
+<div id="result"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let pastedImage = null;
+
+// Support pasting a screenshot directly into the textarea.
+document.addEventListener('paste', (e) => {
+  for (const item of e.clipboardData.items) {
+    if (item.type.startsWith('image/')) {
+      pastedImage = item.getAsFile();
+      $('image').value = '';
+      showPreview(pastedImage);
+      e.preventDefault();
+      return;
+    }
+  }
+});
+
+$('image').addEventListener('change', () => {
+  pastedImage = null;
+  const f = $('image').files[0];
+  if (f) showPreview(f); else clearPreview();
+});
+
+$('clearimg').addEventListener('click', () => {
+  pastedImage = null;
+  $('image').value = '';
+  clearPreview();
+});
+
+function showPreview(file) {
+  const img = $('imgpreview');
+  img.src = URL.createObjectURL(file);
+  img.style.display = 'inline-block';
+  $('clearimg').style.display = 'inline-block';
+}
+function clearPreview() {
+  $('imgpreview').style.display = 'none';
+  $('clearimg').style.display = 'none';
+}
+
+function setStatus(cls, msg) {
+  const el = $('status');
+  el.className = cls;
+  el.textContent = msg;
+}
+
+function renderResult(r) {
+  if (!r) { $('result').innerHTML = ''; return; }
+  const fields = [
+    ['Name', r.name], ['Contact', r.contact], ['Source', r.source],
+    ['Need', r.need], ['Date', r.date], ['Notes', r.notes],
+    ['Confidence', r.confidence],
+  ];
+  const esc = (s) => String(s ?? '—').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  $('result').innerHTML = '<table>' +
+    fields.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('') +
+    '</table>';
+}
+
+$('submit').addEventListener('click', async () => {
+  const text = $('text').value.trim();
+  const file = pastedImage || $('image').files[0] || null;
+  if (!text && !file) { setStatus('err', 'Enter some text or attach an image first.'); return; }
+
+  const fd = new FormData();
+  if (text) fd.append('text', text);
+  if (file) fd.append('image', file, file.name || 'pasted.png');
+
+  $('submit').disabled = true;
+  setStatus('warn', 'Extracting…');
+  renderResult(null);
+  try {
+    const resp = await fetch('/api/submit', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) {
+      setStatus('err', data.error || `Request failed (${resp.status})`);
+      return;
+    }
+    const dup = data.duplicate ? ' (duplicate submission)' : '';
+    if (data.status === 'written') {
+      setStatus('ok', '✅ ' + data.message + dup);
+    } else if (data.status === 'needs_review') {
+      setStatus('warn', '⚠️ ' + data.message + dup);
+    } else {
+      setStatus('err', '❌ ' + data.message + dup);
+    }
+    renderResult(data.result);
+  } catch (err) {
+    setStatus('err', 'Network error: ' + err.message);
+  } finally {
+    $('submit').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

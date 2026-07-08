@@ -1,0 +1,39 @@
+{
+  "name": "leads-v1",
+  "required_fields": ["contact", "need"],
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "nullable": true,
+      "description": "Full name of the lead person, or null if not present in the content"
+    },
+    {
+      "name": "contact",
+      "type": "string",
+      "nullable": true,
+      "description": "How to reach the lead: email address, phone number, or social handle (e.g. @username). Null if not present."
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "description": "Where the lead came from, e.g. 'X DM', 'cold email', 'referral', 'LinkedIn', or 'unknown' if not determinable"
+    },
+    {
+      "name": "need",
+      "type": "string",
+      "description": "Short description (one sentence) of what the lead wants or needs"
+    },
+    {
+      "name": "date",
+      "type": "string",
+      "description": "ISO date (YYYY-MM-DD) the lead reached out. If no date is stated in the content, use the submission date given in the instructions."
+    },
+    {
+      "name": "notes",
+      "type": "string",
+      "description": "Any other relevant context: budget, timeline, company, urgency, etc. Empty string if nothing else relevant."
+    }
+  ],
+  "columns": ["date", "name", "contact", "source", "need", "notes", "flags"]
+}
