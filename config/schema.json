@@ -22,7 +22,7 @@
     {
       "name": "need",
       "type": "string",
-      "description": "Short description (one sentence) of what the lead wants or needs"
+      "description": "Short description (one sentence, always in English regardless of the input language) of what the lead wants or needs"
     },
     {
       "name": "date",
@@ -32,7 +32,7 @@
     {
       "name": "notes",
       "type": "string",
-      "description": "Any other relevant context: budget, timeline, company, urgency, etc. Empty string if nothing else relevant."
+      "description": "Any other relevant context, always in English: budget, timeline, company, urgency, etc. Empty string if nothing else relevant."
     }
   ],
   "columns": ["date", "name", "contact", "source", "need", "notes", "flags"]

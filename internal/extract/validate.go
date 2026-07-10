@@ -26,20 +26,13 @@ func Validate(res *llm.Result, requiredFields []string, submitted time.Time) Ver
 		res.Date = submitted.Format("2006-01-02")
 	}
 
-	// Trust actual field presence over the model's self-report, but surface
-	// both: a required field that is empty is missing even if the model
-	// forgot to list it, and vice versa.
-	missing := map[string]bool{}
-	for _, f := range res.MissingFields {
-		missing[f] = true
-	}
+	// Actual field presence is authoritative: models sometimes list a field
+	// in missing_fields while extracting it fine, and a present required
+	// field must not block the write on a stale self-report. The self-report
+	// still catches nothing presence can't — an empty required field blocks
+	// either way.
 	for _, f := range requiredFields {
 		if _, ok := res.Field(f); !ok {
-			missing[f] = true
-		}
-	}
-	for _, f := range requiredFields {
-		if missing[f] {
 			v.NeedsReview = true
 			v.Reasons = append(v.Reasons, fmt.Sprintf("required field %q not found", f))
 		}

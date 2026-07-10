@@ -33,8 +33,8 @@ func main() {
 		log.Error("config", "err", err)
 		os.Exit(1)
 	}
-	if cfg.AnthropicAPIKey == "" {
-		log.Error("ANTHROPIC_API_KEY is required")
+	if cfg.OpenAIAPIKey == "" {
+		log.Error("OPENAI_API_KEY is required")
 		os.Exit(1)
 	}
 
@@ -45,7 +45,7 @@ func main() {
 	}
 	defer st.Close()
 
-	extractor := llm.NewAnthropicExtractor(
+	extractor := llm.NewOpenAIExtractor(
 		cfg.LLMModel,
 		extract.SystemPrompt(cfg.Schema),
 		extract.JSONSchema(cfg.Schema),

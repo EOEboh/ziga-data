@@ -48,12 +48,14 @@ func TestMissingRequiredFieldBlocks(t *testing.T) {
 	}
 }
 
-func TestModelReportedMissingFieldBlocks(t *testing.T) {
-	// Model says a required field is missing even though heuristics can't tell.
+func TestModelMissingReportIgnoredWhenFieldPresent(t *testing.T) {
+	// Models sometimes self-report a field as missing while extracting it
+	// fine (observed live with gpt-5.4-nano). Actual presence is
+	// authoritative — a present required field must not block the write.
 	r := okResult()
-	r.MissingFields = []string{"need"}
-	if v := Validate(r, required, day); !v.NeedsReview {
-		t.Fatal("model-reported missing required field should need review")
+	r.MissingFields = []string{"need", "name"}
+	if v := Validate(r, required, day); v.NeedsReview {
+		t.Fatalf("present fields must not block despite model self-report: %v", v.Reasons)
 	}
 }
 

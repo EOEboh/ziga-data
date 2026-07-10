@@ -4,9 +4,13 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 // Field is one extractable field in the schema config.
@@ -28,7 +32,7 @@ type Schema struct {
 
 // Config is the full server configuration.
 type Config struct {
-	AnthropicAPIKey string
+	OpenAIAPIKey    string
 	LLMModel        string
 	GoogleCredsPath string
 	SheetID         string
@@ -49,10 +53,16 @@ func envOr(key, def string) string {
 
 // Load reads env vars and the schema file. It fails fast on anything that
 // would only surface as a runtime error later.
+//
+// A .env file in the working directory is loaded first, but variables
+// already exported in the environment always take precedence over it.
 func Load() (*Config, error) {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("load .env: %w", err)
+	}
 	cfg := &Config{
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		LLMModel:        envOr("LLM_MODEL", "claude-haiku-4-5"),
+		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
+		LLMModel:        envOr("LLM_MODEL", "gpt-5.4-nano"),
 		GoogleCredsPath: os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
 		SheetID:         os.Getenv("SHEET_ID"),
 		SheetTab:        envOr("SHEET_TAB", "Leads"),

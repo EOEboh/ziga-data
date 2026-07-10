@@ -3,7 +3,7 @@
 Paste unstructured lead info — text, a forwarded email, or a screenshot — and SheetDrop extracts it into structured fields (name, contact, source, need, date, notes) and appends a row to **your own Google Sheet**.
 
 - **Backend**: Go, no framework
-- **LLM**: Claude Haiku 4.5 via the Anthropic API (text + vision, [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
+- **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Destination**: Google Sheets API with a service account — you share your sheet with the service account's email; no OAuth flow.
 - **Storage**: a single SQLite file for dedup keys, the needs-review queue, and failed writes.
 
@@ -11,7 +11,7 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 
 1. `POST /api/submit` (text and/or image, ≤5 MB png/jpeg/webp/gif)
 2. Dedup check: SHA-256 of content + day bucket — an identical re-submit the same day returns the prior result, no second row, no second LLM call
-3. Claude extracts the fields under a strict JSON schema; the system prompt treats submitted content as **data only** (prompt-injection defense), handles any input language, and reports low confidence instead of guessing on bad images
+3. The LLM extracts the fields under a strict JSON schema; the system prompt treats submitted content as **data only** (prompt-injection defense), handles any input language, and reports low confidence instead of guessing on bad images
 4. Gate: `confidence == "low"` or a missing required field (`contact`, `need`) → saved to the **needs-review queue**, not written to the sheet
 5. Otherwise the row is appended to your sheet (3 attempts, exponential backoff); a terminal failure lands in the **failed-writes queue** with a clear error
 6. If multiple leads are detected in one submission, only the primary one is extracted and the row/response is flagged
@@ -22,10 +22,11 @@ Requirements: Go 1.22+.
 
 ```sh
 git clone https://github.com/EOEboh/sheetdrop && cd sheetdrop
-cp .env.example .env   # fill in values, then:
-set -a; source .env; set +a
+cp .env.example .env   # fill in values
 go run ./cmd/server
 ```
+
+The server loads `.env` from the working directory automatically; variables already exported in your shell take precedence over the file.
 
 Open http://localhost:8080 and paste a lead.
 
@@ -35,11 +36,11 @@ Without `SHEET_ID` / `GOOGLE_APPLICATION_CREDENTIALS` the server runs in **dry-r
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | — | Claude API key (server-side only, never sent to the browser) |
+| `OPENAI_API_KEY` | ✅ | — | OpenAI API key (server-side only, never sent to the browser) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | for sheet writes | — | Path to the service-account JSON key |
 | `SHEET_ID` | for sheet writes | — | Spreadsheet ID from the sheet URL |
 | `SHEET_TAB` | | `Leads` | Worksheet tab to append to |
-| `LLM_MODEL` | | `claude-haiku-4-5` | Any vision-capable Claude model |
+| `LLM_MODEL` | | `gpt-5.4-nano` | Any vision-capable OpenAI chat model |
 | `PORT` | | `8080` | HTTP port |
 | `DB_PATH` | | `./sheetdrop.db` | SQLite file |
 | `SCHEMA_PATH` | | `config/schema.json` | Extraction schema + column mapping |
@@ -100,7 +101,7 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/sheetdrop
 ExecStart=/opt/sheetdrop/sheetdrop
-Environment=ANTHROPIC_API_KEY=sk-ant-...
+Environment=OPENAI_API_KEY=sk-...
 Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/sheetdrop/service-account.json
 Environment=SHEET_ID=...
 Environment=SCHEMA_PATH=/opt/sheetdrop/schema.json
