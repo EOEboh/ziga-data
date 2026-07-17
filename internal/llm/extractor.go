@@ -19,15 +19,19 @@ type Input struct {
 
 // Result is the structured extraction returned by the model.
 type Result struct {
-	Name                  *string  `json:"name"`
-	Contact               *string  `json:"contact"`
-	Source                string   `json:"source"`
-	Need                  string   `json:"need"`
-	Date                  string   `json:"date"`
-	Notes                 string   `json:"notes"`
-	Confidence            string   `json:"confidence"` // "high" | "medium" | "low"
-	MissingFields         []string `json:"missing_fields"`
-	MultipleLeadsDetected bool     `json:"multiple_leads_detected"`
+	Name       *string `json:"name"`
+	Contact    *string `json:"contact"`
+	Source     string  `json:"source"`
+	Need       string  `json:"need"`
+	Date       string  `json:"date"`
+	Notes      string  `json:"notes"`
+	Confidence string  `json:"confidence"` // "high" | "medium" | "low"
+	// FieldConfidence maps each schema field name to "high" | "medium" | "low".
+	// Nil for extractions stored before per-field confidence existed;
+	// validation falls back to the overall Confidence in that case.
+	FieldConfidence       map[string]string `json:"field_confidence,omitempty"`
+	MissingFields         []string          `json:"missing_fields"`
+	MultipleLeadsDetected bool              `json:"multiple_leads_detected"`
 }
 
 // Field returns the extracted value for a schema field name, and whether it
@@ -56,6 +60,36 @@ func (r *Result) Field(name string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// SetField overwrites the value for a schema field name, reporting whether
+// the name is known. The inverse of Field: nullable fields become nil when
+// set to the empty string. Used to merge user edits before a confirmed write.
+func (r *Result) SetField(name, value string) bool {
+	switch name {
+	case "name":
+		r.Name = strOrNil(value)
+	case "contact":
+		r.Contact = strOrNil(value)
+	case "source":
+		r.Source = value
+	case "need":
+		r.Need = value
+	case "date":
+		r.Date = value
+	case "notes":
+		r.Notes = value
+	default:
+		return false
+	}
+	return true
+}
+
+func strOrNil(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 // Extractor turns an unstructured submission into a structured Result.

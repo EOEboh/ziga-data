@@ -32,6 +32,7 @@ Extract these fields:
 	b.WriteString(`
 Also report:
 - confidence: "high", "medium", or "low" — your confidence in the extraction overall
+- field_confidence: for each field above, your confidence in the value you produced for it. "high" only when the value is copied verbatim or clearly legible; "medium" when inferred from context; "low" when guessed or barely legible. Confidence rates the value you produced — a field you confidently determined to be absent is "high", not "low".
 - missing_fields: names of required fields (` + strings.Join(s.RequiredFields, ", ") + `) that were not found in the content
 - multiple_leads_detected: true if the input appears to contain more than one distinct lead
 `)
@@ -73,12 +74,30 @@ func JSONSchema(s config.Schema) map[string]any {
 		"type": "string",
 		"enum": []string{"high", "medium", "low"},
 	}
+	// Strict structured outputs requires nested objects to list every property
+	// in their own `required` and set additionalProperties false, same as the
+	// top level — the API rejects the schema otherwise.
+	fcProps := map[string]any{}
+	fcRequired := []string{}
+	for _, f := range s.Fields {
+		fcProps[f.Name] = map[string]any{
+			"type": "string",
+			"enum": []string{"high", "medium", "low"},
+		}
+		fcRequired = append(fcRequired, f.Name)
+	}
+	props["field_confidence"] = map[string]any{
+		"type":                 "object",
+		"properties":           fcProps,
+		"required":             fcRequired,
+		"additionalProperties": false,
+	}
 	props["missing_fields"] = map[string]any{
 		"type":  "array",
 		"items": map[string]any{"type": "string"},
 	}
 	props["multiple_leads_detected"] = map[string]any{"type": "boolean"}
-	required = append(required, "confidence", "missing_fields", "multiple_leads_detected")
+	required = append(required, "confidence", "field_confidence", "missing_fields", "multiple_leads_detected")
 
 	return map[string]any{
 		"type":                 "object",

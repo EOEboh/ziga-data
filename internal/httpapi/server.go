@@ -7,16 +7,18 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/EOEboh/sheetdrop/internal/config"
 	"github.com/EOEboh/sheetdrop/internal/llm"
 	"github.com/EOEboh/sheetdrop/internal/store"
 )
 
-// RowWriter appends one row to the destination sheet. Implemented by the
-// sheets package; stubbed in tests.
+// RowWriter appends rows to the destination sheet and reads the tail back
+// for the preview strip. Implemented by the sheets package; stubbed in tests.
 type RowWriter interface {
 	Append(ctx context.Context, row []string) error
+	LastRows(ctx context.Context, n int) ([][]string, error)
 }
 
 type Server struct {
@@ -25,6 +27,9 @@ type Server struct {
 	extractor llm.Extractor
 	store     *store.Store
 	writer    RowWriter
+	// confirmMu serializes confirms; concurrent confirms of the same
+	// submission would otherwise append duplicate sheet rows.
+	confirmMu sync.Mutex
 }
 
 func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter) *Server {
@@ -39,8 +44,13 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 		w.Write([]byte("ok"))
 	})
 	mux.Handle("POST /api/submit", s.rateLimit(http.HandlerFunc(s.handleSubmit)))
-	mux.HandleFunc("GET /api/review", s.handleQueue(store.StatusNeedsReview))
-	mux.HandleFunc("GET /api/failed", s.handleQueue(store.StatusFailedWrite))
+	mux.HandleFunc("POST /api/submissions/{id}/confirm", s.handleConfirm)
+	mux.HandleFunc("POST /api/submissions/{id}/discard", s.handleDiscard)
+	mux.HandleFunc("GET /api/submissions/{id}/image", s.handleImage)
+	mux.HandleFunc("GET /api/queue", s.handleQueue)
+	mux.HandleFunc("GET /api/preview", s.handlePreview)
+	mux.HandleFunc("GET /api/destination", s.handleDestination)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.Handle("GET /", http.FileServerFS(static))
 	return s.logging(mux)
 }
