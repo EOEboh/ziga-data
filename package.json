@@ -1,0 +1,12 @@
+{
+  "name": "sheetdrop-ui",
+  "private": true,
+  "scripts": {
+    "build": "esbuild ui/main.ts --bundle --format=iife --target=es2020 --outfile=web/app.js",
+    "check": "tsc --noEmit -p ui"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  }
+}
