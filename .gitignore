@@ -8,3 +8,4 @@ sheetdrop.db
 
 # Build output
 /sheetdrop
+node_modules/

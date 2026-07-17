@@ -5,15 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/EOEboh/sheetdrop/internal/config"
+	"github.com/EOEboh/sheetdrop/internal/extract"
 	"github.com/EOEboh/sheetdrop/internal/llm"
 	"github.com/EOEboh/sheetdrop/internal/store"
 )
@@ -46,6 +49,17 @@ func (f *fakeWriter) Append(_ context.Context, row []string) error {
 	return nil
 }
 
+func (f *fakeWriter) LastRows(_ context.Context, n int) ([][]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	rows := f.rows
+	if len(rows) > n {
+		rows = rows[len(rows)-n:]
+	}
+	return rows, nil
+}
+
 func strp(s string) *string { return &s }
 
 func goodResult() *llm.Result {
@@ -53,6 +67,10 @@ func goodResult() *llm.Result {
 		Name: strp("Jane"), Contact: strp("jane@x.com"),
 		Source: "X DM", Need: "logo design", Date: "2026-07-08",
 		Notes: "budget $500", Confidence: "high",
+		FieldConfidence: map[string]string{
+			"name": "high", "contact": "high", "source": "high",
+			"need": "high", "date": "high", "notes": "high",
+		},
 	}
 }
 
@@ -65,15 +83,24 @@ func testServer(t *testing.T, ex llm.Extractor, w RowWriter) *Server {
 	t.Cleanup(func() { st.Close() })
 	cfg := &config.Config{
 		RatePerMin: 1000,
+		SheetTab:   "Leads",
 		Schema: config.Schema{
 			RequiredFields: []string{"contact", "need"},
-			Columns:        []string{"date", "name", "contact", "source", "need", "notes", "flags"},
+			Fields: []config.Field{
+				{Name: "name"}, {Name: "contact"}, {Name: "source"},
+				{Name: "need"}, {Name: "date"}, {Name: "notes"},
+			},
+			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
 		},
 	}
 	return New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), ex, st, w)
 }
 
-func postText(t *testing.T, h http.Handler, text string) (*httptest.ResponseRecorder, submitResponse) {
+func handler(s *Server) http.Handler {
+	return s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>ok</html>")}})
+}
+
+func postText(t *testing.T, h http.Handler, text string) (*httptest.ResponseRecorder, submissionResponse) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -85,73 +112,233 @@ func postText(t *testing.T, h http.Handler, text string) (*httptest.ResponseReco
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	var resp submitResponse
+	var resp submissionResponse
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	return rec, resp
 }
 
-func handler(s *Server) http.Handler {
-	return s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>ok</html>")}})
+func postConfirm(t *testing.T, h http.Handler, id int64, fields map[string]string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"fields": fields})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/submissions/%d/confirm", id), bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	return rec, resp
 }
 
-func TestSubmitWritesRow(t *testing.T) {
+func TestSubmitExtractsWithoutWriting(t *testing.T) {
 	w := &fakeWriter{}
 	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
 	rec, resp := postText(t, handler(s), "Jane wants a logo, jane@x.com")
-	if rec.Code != 200 || resp.Status != store.StatusWritten {
+	if rec.Code != 200 || resp.Status != store.StatusPending {
 		t.Fatalf("code=%d status=%s", rec.Code, resp.Status)
+	}
+	if len(w.rows) != 0 {
+		t.Fatal("submit must not write to the sheet")
+	}
+	if resp.ID == 0 {
+		t.Fatal("response must carry the submission id")
+	}
+	for name, st := range resp.FieldStates {
+		if st != extract.FieldOK {
+			t.Fatalf("field %q = %s, want ok", name, st)
+		}
+	}
+	if resp.Input.Text == "" {
+		t.Fatal("response must echo the original input")
+	}
+}
+
+func TestSubmitFlagsLowConfidenceAndMissing(t *testing.T) {
+	r := goodResult()
+	r.Contact = nil
+	r.FieldConfidence["need"] = "low"
+	s := testServer(t, &fakeExtractor{result: r}, &fakeWriter{})
+	_, resp := postText(t, handler(s), "someone wants something")
+	if resp.Status != store.StatusPending {
+		t.Fatalf("status=%s", resp.Status)
+	}
+	if resp.FieldStates["contact"] != extract.FieldMissing {
+		t.Fatalf("contact = %s, want missing", resp.FieldStates["contact"])
+	}
+	if resp.FieldStates["need"] != extract.FieldLowConfidence {
+		t.Fatalf("need = %s, want low_confidence", resp.FieldStates["need"])
+	}
+}
+
+func TestConfirmWritesEditedRow(t *testing.T) {
+	w := &fakeWriter{}
+	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+
+	rec, resp := postConfirm(t, h, sub.ID, map[string]string{"name": "Jane Doe", "notes": ""})
+	if rec.Code != 200 || resp["status"] != string(store.StatusWritten) {
+		t.Fatalf("code=%d resp=%v", rec.Code, resp)
 	}
 	if len(w.rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(w.rows))
 	}
-	want := []string{"2026-07-08", "Jane", "jane@x.com", "X DM", "logo design", "budget $500", ""}
+	want := []string{"2026-07-08", "Jane Doe", "jane@x.com", "X DM", "logo design", "", ""}
 	for i, v := range want {
 		if w.rows[0][i] != v {
 			t.Fatalf("row[%d] = %q, want %q (row: %v)", i, w.rows[0][i], v, w.rows[0])
 		}
 	}
+	// The edited extraction is persisted.
+	stored, _ := s.store.Get(context.Background(), sub.ID)
+	if stored.Status != store.StatusWritten || !strings.Contains(string(stored.Extraction), "Jane Doe") {
+		t.Fatalf("stored: status=%s extraction=%s", stored.Status, stored.Extraction)
+	}
 }
 
-func TestLowConfidenceGoesToReview(t *testing.T) {
-	r := goodResult()
-	r.Confidence = "low"
+func TestConfirmTwiceIsConflict(t *testing.T) {
 	w := &fakeWriter{}
-	s := testServer(t, &fakeExtractor{result: r}, w)
-	_, resp := postText(t, handler(s), "blurry stuff")
-	if resp.Status != store.StatusNeedsReview {
-		t.Fatalf("status=%s", resp.Status)
+	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+	postConfirm(t, h, sub.ID, nil)
+	rec, _ := postConfirm(t, h, sub.ID, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code=%d, want 409", rec.Code)
 	}
-	if len(w.rows) != 0 {
-		t.Fatal("needs_review must not write to the sheet")
+	if len(w.rows) != 1 {
+		t.Fatalf("second confirm must not write again: %d rows", len(w.rows))
 	}
 }
 
-func TestMissingRequiredGoesToReview(t *testing.T) {
+func TestConfirmMissingRequiredRejected(t *testing.T) {
 	r := goodResult()
 	r.Contact = nil
-	s := testServer(t, &fakeExtractor{result: r}, &fakeWriter{})
-	_, resp := postText(t, handler(s), "someone wants something")
-	if resp.Status != store.StatusNeedsReview {
-		t.Fatalf("status=%s", resp.Status)
+	w := &fakeWriter{}
+	s := testServer(t, &fakeExtractor{result: r}, w)
+	h := handler(s)
+	_, sub := postText(t, h, "someone wants something")
+
+	rec, resp := postConfirm(t, h, sub.ID, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code=%d, want 422", rec.Code)
+	}
+	if len(w.rows) != 0 {
+		t.Fatal("nothing may be written with a required field missing")
+	}
+	states := resp["field_states"].(map[string]any)
+	if states["contact"] != string(extract.FieldMissing) {
+		t.Fatalf("field_states = %v", states)
+	}
+	// Filling the field via the edit payload makes the same confirm pass.
+	rec, _ = postConfirm(t, h, sub.ID, map[string]string{"contact": "jane@x.com"})
+	if rec.Code != 200 || len(w.rows) != 1 {
+		t.Fatalf("code=%d rows=%d after filling required field", rec.Code, len(w.rows))
 	}
 }
 
-func TestWriterFailureRecorded(t *testing.T) {
-	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{err: errors.New("boom")})
-	_, resp := postText(t, handler(s), "Jane wants a logo")
-	if resp.Status != store.StatusFailedWrite {
-		t.Fatalf("status=%s", resp.Status)
+func TestConfirmFailureKeepsDataAndRetries(t *testing.T) {
+	w := &fakeWriter{err: errors.New("boom")}
+	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+
+	rec, resp := postConfirm(t, h, sub.ID, map[string]string{"name": "Edited"})
+	if rec.Code != http.StatusBadGateway || resp["status"] != string(store.StatusFailedWrite) {
+		t.Fatalf("code=%d resp=%v", rec.Code, resp)
 	}
-	failed, err := s.store.ListByStatus(context.Background(), store.StatusFailedWrite, 10)
-	if err != nil || len(failed) != 1 {
-		t.Fatalf("failed queue: %d err=%v", len(failed), err)
+	stored, _ := s.store.Get(context.Background(), sub.ID)
+	if stored.Status != store.StatusFailedWrite {
+		t.Fatalf("status=%s, want failed_write", stored.Status)
+	}
+	if !strings.Contains(string(stored.Extraction), "Edited") {
+		t.Fatal("edited data must survive a failed write")
+	}
+	// Retry is the same call once the writer recovers.
+	w.err = nil
+	rec, _ = postConfirm(t, h, sub.ID, map[string]string{"name": "Edited"})
+	if rec.Code != 200 || len(w.rows) != 1 {
+		t.Fatalf("retry: code=%d rows=%d", rec.Code, len(w.rows))
+	}
+}
+
+func TestConfirmUnknownSubmission(t *testing.T) {
+	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{})
+	rec, _ := postConfirm(t, handler(s), 999, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code=%d, want 404", rec.Code)
+	}
+}
+
+func TestDiscardFreesSubmission(t *testing.T) {
+	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{})
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/submissions/%d/discard", sub.ID), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("discard code=%d", rec.Code)
+	}
+	gone, _ := s.store.Get(context.Background(), sub.ID)
+	if gone != nil {
+		t.Fatal("discarded submission must be deleted")
+	}
+}
+
+func TestQueueListsPendingAndFailed(t *testing.T) {
+	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{err: errors.New("boom")})
+	h := handler(s)
+	_, sub := postText(t, h, "lead one")
+	postConfirm(t, h, sub.ID, nil) // becomes failed_write
+
+	req := httptest.NewRequest("GET", "/api/queue", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var resp struct {
+		Count int                  `json:"count"`
+		Items []submissionResponse `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Count != 1 || len(resp.Items) != 1 {
+		t.Fatalf("count=%d items=%d", resp.Count, len(resp.Items))
+	}
+	if resp.Items[0].Status != store.StatusFailedWrite || resp.Items[0].Error == "" {
+		t.Fatalf("item: %+v", resp.Items[0])
+	}
+}
+
+func TestPreviewPadsRows(t *testing.T) {
+	w := &fakeWriter{rows: [][]string{{"2026-07-01", "Ada"}}}
+	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
+	req := httptest.NewRequest("GET", "/api/preview", nil)
+	rec := httptest.NewRecorder()
+	handler(s).ServeHTTP(rec, req)
+	var resp struct {
+		Columns []string   `json:"columns"`
+		Rows    [][]string `json:"rows"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Rows) != 1 || len(resp.Rows[0]) != len(resp.Columns) {
+		t.Fatalf("rows not padded to columns: %v vs %v", resp.Rows, resp.Columns)
+	}
+}
+
+func TestPreviewDegradesOnError(t *testing.T) {
+	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{err: errors.New("boom")})
+	req := httptest.NewRequest("GET", "/api/preview", nil)
+	rec := httptest.NewRecorder()
+	handler(s).ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("preview must degrade with 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "preview unavailable") {
+		t.Fatalf("body: %s", rec.Body.String())
 	}
 }
 
 func TestDuplicateSubmissionNoSecondCall(t *testing.T) {
 	ex := &fakeExtractor{result: goodResult()}
-	w := &fakeWriter{}
-	s := testServer(t, ex, w)
+	s := testServer(t, ex, &fakeWriter{})
 	h := handler(s)
 	postText(t, h, "same lead text")
 	_, resp := postText(t, h, "same lead text")
@@ -160,9 +347,6 @@ func TestDuplicateSubmissionNoSecondCall(t *testing.T) {
 	}
 	if ex.calls != 1 {
 		t.Fatalf("extractor called %d times, want 1", ex.calls)
-	}
-	if len(w.rows) != 1 {
-		t.Fatalf("sheet rows = %d, want 1", len(w.rows))
 	}
 }
 
@@ -179,14 +363,46 @@ func TestMultipleLeadsFlagSurfaces(t *testing.T) {
 	r.MultipleLeadsDetected = true
 	w := &fakeWriter{}
 	s := testServer(t, &fakeExtractor{result: r}, w)
-	_, resp := postText(t, handler(s), "two leads in one paste")
-	if resp.Status != store.StatusWritten {
-		t.Fatalf("status=%s", resp.Status)
-	}
+	h := handler(s)
+	_, resp := postText(t, h, "two leads in one paste")
 	if len(resp.Flags) == 0 {
 		t.Fatal("expected multiple-leads flag in response")
 	}
-	if w.rows[0][6] == "" {
-		t.Fatal("expected flags column to be populated")
+	if resp.Result == nil || !resp.Result.MultipleLeadsDetected {
+		t.Fatal("multi-lead bit must surface on the result")
+	}
+	// The flag rides along to the sheet on confirm.
+	postConfirm(t, h, resp.ID, nil)
+	if len(w.rows) != 1 || w.rows[0][6] == "" {
+		t.Fatalf("expected flags column populated: %v", w.rows)
+	}
+}
+
+func TestDestinationListsSheetAndNotion(t *testing.T) {
+	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{})
+	req := httptest.NewRequest("GET", "/api/destination", nil)
+	rec := httptest.NewRecorder()
+	handler(s).ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Leads (Google Sheet)") || !strings.Contains(body, "Notion") {
+		t.Fatalf("body: %s", body)
+	}
+}
+
+func TestHistoryListsWritten(t *testing.T) {
+	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{})
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+	postConfirm(t, h, sub.ID, nil)
+
+	req := httptest.NewRequest("GET", "/api/history", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Items) != 1 {
+		t.Fatalf("history items = %d, want 1", len(resp.Items))
 	}
 }

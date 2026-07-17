@@ -23,12 +23,25 @@ var allowedImageTypes = map[string]bool{
 	"image/gif":  true,
 }
 
-type submitResponse struct {
-	Status    store.Status `json:"status"`
-	Duplicate bool         `json:"duplicate"`
-	Result    *llm.Result  `json:"result,omitempty"`
-	Flags     []string     `json:"flags,omitempty"`
-	Message   string       `json:"message"`
+// submissionResponse is the shared JSON shape for a submission: returned by
+// POST /api/submit and as the items of GET /api/queue, so the review pane
+// renders fresh extractions and reloaded queue items identically.
+type submissionResponse struct {
+	ID          int64                         `json:"id"`
+	Status      store.Status                  `json:"status"`
+	Duplicate   bool                          `json:"duplicate,omitempty"`
+	Result      *llm.Result                   `json:"result,omitempty"`
+	FieldStates map[string]extract.FieldState `json:"field_states,omitempty"`
+	Flags       []string                      `json:"flags,omitempty"`
+	Error       string                        `json:"error,omitempty"`
+	Input       submissionInput               `json:"input"`
+	CreatedAt   time.Time                     `json:"created_at"`
+}
+
+type submissionInput struct {
+	Text     string `json:"text,omitempty"`
+	HasImage bool   `json:"has_image"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -76,6 +89,8 @@ func parseSubmission(r *http.Request) (text string, image []byte, mediaType stri
 	return text, image, mediaType, ""
 }
 
+// handleSubmit extracts a lead and stores it as pending. Nothing is written
+// to the sheet here — that only happens on an explicit confirm.
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	text, image, mediaType, errMsg := parseSubmission(r)
@@ -89,13 +104,13 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	log := s.log.With("hash", hash[:12])
 
 	// Idempotency: an identical submission today returns the prior outcome
-	// without another LLM call or sheet row.
+	// without another LLM call.
 	if prior, err := s.store.FindByHash(ctx, hash); err != nil {
 		log.Error("dedup lookup failed", "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
 	} else if prior != nil {
-		writeJSON(w, http.StatusOK, priorResponse(prior))
+		writeJSON(w, http.StatusOK, s.submissionResponse(prior, true))
 		return
 	}
 
@@ -107,54 +122,83 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Error("extraction failed", "err", err)
-		httpError(w, http.StatusBadGateway, "extraction failed — please try again")
+		httpError(w, http.StatusBadGateway, "Extraction failed. Try again")
 		return
 	}
 
-	verdict := extract.Validate(result, s.cfg.Schema.RequiredFields, now)
+	verdict := extract.Validate(result, s.cfg.Schema, now)
 	resultJSON, _ := json.Marshal(result)
+	flagsJSON, _ := json.Marshal(verdict.Flags)
 
-	resp := submitResponse{Result: result, Flags: verdict.Flags}
 	sub := &store.Submission{
-		ContentHash:  hash,
-		Extraction:   resultJSON,
-		InputExcerpt: excerpt(text, image),
+		ContentHash:    hash,
+		Status:         store.StatusPending,
+		Extraction:     resultJSON,
+		Flags:          flagsJSON,
+		InputExcerpt:   excerpt(text, image),
+		InputText:      text,
+		InputImage:     image,
+		InputImageType: mediaType,
 	}
-
-	if verdict.NeedsReview {
-		sub.Status = store.StatusNeedsReview
-		resp.Status = store.StatusNeedsReview
-		resp.Flags = append(verdict.Reasons, verdict.Flags...)
-		resp.Message = "Not written to the sheet — flagged for review: " + strings.Join(verdict.Reasons, "; ")
-	} else if err := s.writer.Append(ctx, s.buildRow(result, verdict.Flags)); err != nil {
-		log.Error("sheet write failed", "err", err)
-		sub.Status = store.StatusFailedWrite
-		sub.Error = err.Error()
-		resp.Status = store.StatusFailedWrite
-		resp.Message = "Extraction succeeded but writing to Google Sheets failed. The result is saved locally in the failed-writes queue."
-	} else {
-		sub.Status = store.StatusWritten
-		resp.Status = store.StatusWritten
-		resp.Message = "Lead added to your sheet."
-		if len(verdict.Flags) > 0 {
-			resp.Message += " Note: " + strings.Join(verdict.Flags, "; ")
-		}
-	}
-
-	flagsJSON, _ := json.Marshal(resp.Flags)
-	sub.Flags = flagsJSON
-	if _, err := s.store.Insert(ctx, sub); err != nil {
+	duplicate, err := s.store.Insert(ctx, sub)
+	if err != nil {
 		log.Error("store insert failed", "err", err)
+		httpError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if duplicate {
+		// Lost an insert race with an identical concurrent submission.
+		if prior, err := s.store.FindByHash(ctx, hash); err == nil && prior != nil {
+			writeJSON(w, http.StatusOK, s.submissionResponse(prior, true))
+			return
+		}
+		httpError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 
-	log.Info("submission processed",
-		"status", sub.Status,
+	log.Info("submission extracted",
+		"id", sub.ID,
+		"needs_attention", verdict.NeedsAttention,
 		"confidence", result.Confidence,
-		"missing_fields", result.MissingFields,
 		"multiple_leads", result.MultipleLeadsDetected,
 		"has_image", len(image) > 0,
 	)
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, s.submissionResponse(sub, false))
+}
+
+// submissionResponse builds the shared response shape from a stored
+// submission, recomputing per-field states from the extraction blob.
+func (s *Server) submissionResponse(sub *store.Submission, duplicate bool) submissionResponse {
+	resp := submissionResponse{
+		ID:        sub.ID,
+		Status:    sub.Status,
+		Duplicate: duplicate,
+		Error:     sub.Error,
+		CreatedAt: sub.CreatedAt,
+		Input: submissionInput{
+			Text:     sub.InputText,
+			HasImage: len(sub.InputImage) > 0,
+		},
+	}
+	if resp.Input.HasImage {
+		resp.Input.ImageURL = fmt.Sprintf("/api/submissions/%d/image", sub.ID)
+	}
+	if resp.Input.Text == "" && !resp.Input.HasImage {
+		// Rows stored before full input was kept: the excerpt is all we have.
+		resp.Input.Text = sub.InputExcerpt
+	}
+	if len(sub.Extraction) > 0 {
+		var res llm.Result
+		if json.Unmarshal(sub.Extraction, &res) == nil {
+			resp.Result = &res
+			v := extract.Validate(&res, s.cfg.Schema, sub.CreatedAt)
+			resp.FieldStates = v.Fields
+		}
+	}
+	if len(sub.Flags) > 0 {
+		json.Unmarshal(sub.Flags, &resp.Flags)
+	}
+	return resp
 }
 
 // buildRow maps the result to sheet columns per config — no field names
@@ -172,25 +216,7 @@ func (s *Server) buildRow(res *llm.Result, flags []string) []string {
 	return row
 }
 
-func priorResponse(prior *store.Submission) submitResponse {
-	resp := submitResponse{
-		Status:    prior.Status,
-		Duplicate: true,
-		Message:   "This content was already submitted today — no new row was created.",
-	}
-	if len(prior.Extraction) > 0 {
-		var res llm.Result
-		if json.Unmarshal(prior.Extraction, &res) == nil {
-			resp.Result = &res
-		}
-	}
-	if len(prior.Flags) > 0 {
-		json.Unmarshal(prior.Flags, &resp.Flags)
-	}
-	return resp
-}
-
-// excerpt keeps a short, non-sensitive preview for the review queues.
+// excerpt keeps a short preview for queue and history listings.
 func excerpt(text string, image []byte) string {
 	const max = 120
 	t := strings.TrimSpace(text)
@@ -201,31 +227,4 @@ func excerpt(text string, image []byte) string {
 		t = t[:max] + "…"
 	}
 	return t
-}
-
-func (s *Server) handleQueue(status store.Status) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		subs, err := s.store.ListByStatus(r.Context(), status, 100)
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		type item struct {
-			ID        int64           `json:"id"`
-			Excerpt   string          `json:"excerpt"`
-			Result    json.RawMessage `json:"result,omitempty"`
-			Flags     json.RawMessage `json:"flags,omitempty"`
-			Error     string          `json:"error,omitempty"`
-			CreatedAt time.Time       `json:"created_at"`
-		}
-		items := make([]item, 0, len(subs))
-		for _, sub := range subs {
-			items = append(items, item{
-				ID: sub.ID, Excerpt: sub.InputExcerpt,
-				Result: sub.Extraction, Flags: sub.Flags,
-				Error: sub.Error, CreatedAt: sub.CreatedAt,
-			})
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": status, "items": items})
-	}
 }

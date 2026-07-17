@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 
 	sheetdrop "github.com/EOEboh/sheetdrop"
 	"github.com/EOEboh/sheetdrop/internal/config"
@@ -17,13 +20,43 @@ import (
 )
 
 // dryRunWriter stands in for Google Sheets when SHEET_ID or credentials are
-// not configured — useful for local testing of the extraction path.
-type dryRunWriter struct{ log *slog.Logger }
+// not configured: an in-memory sheet, so the full submit → confirm → preview
+// flow works locally. Rows are lost on restart. A cell containing the literal
+// "[fail]" makes Append error, to exercise the UI's failed-write path.
+type dryRunWriter struct {
+	log  *slog.Logger
+	mu   sync.Mutex
+	rows [][]string
+}
 
-func (d dryRunWriter) Append(_ context.Context, row []string) error {
-	d.log.Warn("dry-run: sheets not configured, row not written", "row", row)
+func (d *dryRunWriter) Append(_ context.Context, row []string) error {
+	for _, cell := range row {
+		if strings.Contains(cell, "[fail]") {
+			return errors.New("dry-run: simulated sheet failure ([fail] marker in a cell)")
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.rows = append(d.rows, row)
+	d.log.Info("dry-run: row stored in memory, sheets not configured", "row", row)
 	return nil
 }
+
+func (d *dryRunWriter) LastRows(_ context.Context, n int) ([][]string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rows := d.rows
+	if len(rows) > n {
+		rows = rows[len(rows)-n:]
+	}
+	out := make([][]string, len(rows))
+	copy(out, rows)
+	return out, nil
+}
+
+// DryRun marks the destination as not connected to a real sheet; the
+// destination picker surfaces this.
+func (d *dryRunWriter) DryRun() bool { return true }
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -63,7 +96,7 @@ func main() {
 		}
 	} else {
 		log.Warn("SHEET_ID / GOOGLE_APPLICATION_CREDENTIALS not set — running in dry-run mode, rows will not be written")
-		writer = dryRunWriter{log: log}
+		writer = &dryRunWriter{log: log}
 	}
 
 	static, err := fs.Sub(sheetdrop.WebFS, "web")

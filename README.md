@@ -1,20 +1,21 @@
 # SheetDrop
 
-Paste unstructured lead info — text, a forwarded email, or a screenshot — and SheetDrop extracts it into structured fields (name, contact, source, need, date, notes) and appends a row to **your own Google Sheet**.
+Paste unstructured lead info — text, a forwarded email, or a screenshot — and SheetDrop extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
 
 - **Backend**: Go, no framework
+- **Frontend**: server-served static files; TypeScript compiled to one plain-JS bundle (`web/app.js`, committed), plain CSS with custom properties. No framework, no SPA.
 - **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Destination**: Google Sheets API with a service account — you share your sheet with the service account's email; no OAuth flow.
-- **Storage**: a single SQLite file for dedup keys, the needs-review queue, and failed writes.
+- **Storage**: a single SQLite file for dedup keys, pending reviews, failed writes, and history.
 
 ## How a submission flows
 
 1. `POST /api/submit` (text and/or image, ≤5 MB png/jpeg/webp/gif)
-2. Dedup check: SHA-256 of content + day bucket — an identical re-submit the same day returns the prior result, no second row, no second LLM call
-3. The LLM extracts the fields under a strict JSON schema; the system prompt treats submitted content as **data only** (prompt-injection defense), handles any input language, and reports low confidence instead of guessing on bad images
-4. Gate: `confidence == "low"` or a missing required field (`contact`, `need`) → saved to the **needs-review queue**, not written to the sheet
-5. Otherwise the row is appended to your sheet (3 attempts, exponential backoff); a terminal failure lands in the **failed-writes queue** with a clear error
-6. If multiple leads are detected in one submission, only the primary one is extracted and the row/response is flagged
+2. Dedup check: SHA-256 of content + day bucket — an identical re-submit the same day returns the prior result, no second LLM call
+3. The LLM extracts the fields under a strict JSON schema with **per-field confidence**; the system prompt treats submitted content as **data only** (prompt-injection defense), handles any input language, and reports low confidence instead of guessing on bad images
+4. The extraction is stored as **pending** and rendered in the review pane: low-confidence fields get an amber state, missing required fields (`contact`, `need`) a red one — all editable inline
+5. `POST /api/submissions/{id}/confirm` writes the (possibly edited) row to your sheet (3 attempts, exponential backoff). A terminal failure keeps the submission as `failed_write` with the edited data intact; the Retry button is the same confirm call
+6. If multiple leads are detected in one submission, only the primary one is extracted and the review pane shows a banner
 
 ## Local setup
 
@@ -30,7 +31,19 @@ The server loads `.env` from the working directory automatically; variables alre
 
 Open http://localhost:8080 and paste a lead.
 
-Without `SHEET_ID` / `GOOGLE_APPLICATION_CREDENTIALS` the server runs in **dry-run mode**: extraction, gating, and dedup all work; the row is logged instead of written. Handy for testing the LLM path first.
+Without `SHEET_ID` / `GOOGLE_APPLICATION_CREDENTIALS` the server runs in **dry-run mode**: the destination becomes an in-memory sheet, so the full submit → review → confirm → preview flow works locally (rows are lost on restart). To exercise the failed-write UI in dry-run mode, put the literal `[fail]` in any field before confirming.
+
+### Frontend development
+
+The UI sources live in `ui/*.ts` and compile to the committed `web/app.js` (embedded into the binary via `go:embed`, so `go build` needs no Node):
+
+```sh
+npm install     # once: esbuild + typescript
+make ui-check   # type-check
+make ui         # rebuild web/app.js — commit the result
+```
+
+Open http://localhost:8080/?mock=1 to drive the UI against built-in fixtures (all confidence states, a failing confirm) with no backend calls.
 
 ### Environment variables
 
@@ -65,10 +78,17 @@ The service account only ever touches sheets explicitly shared with it — the a
 
 | Endpoint | Description |
 |---|---|
-| `POST /api/submit` | multipart form: `text` and/or `image`. Returns `{status, duplicate, result, flags, message}` where `status` is `written` / `needs_review` / `failed_write` |
-| `GET /api/review` | needs-review queue (newest 100) |
-| `GET /api/failed` | failed-writes queue |
+| `POST /api/submit` | multipart form: `text` and/or `image`. Extract-only — stores a `pending` submission and returns `{id, status, result, field_states, flags, input, created_at}`. Writes nothing to the sheet |
+| `POST /api/submissions/{id}/confirm` | body `{"fields": {name: value, ...}}` with the reviewed values. The only path that appends a sheet row. Accepts `pending` and `failed_write` (retry = same call); `409` once written, `422` if a required field is still empty |
+| `POST /api/submissions/{id}/discard` | delete a pending/failed submission (frees the same-day dedup hash) |
+| `GET /api/submissions/{id}/image` | the original uploaded image |
+| `GET /api/queue` | pending + failed submissions, newest 100, with `count` for the badge |
+| `GET /api/preview` | last 3 data rows of the connected sheet (assumes row 1 is the header) |
+| `GET /api/destination` | connected destination for the picker |
+| `GET /api/history` | last 50 written submissions |
 | `GET /healthz` | liveness |
+
+`status` is `pending` / `written` / `failed_write`. Only `/api/submit` is rate-limited (it is the only LLM-cost endpoint).
 
 Every request is logged as structured JSON (content hash — never raw content —, confidence, missing fields, status, duration).
 
@@ -82,7 +102,7 @@ Every request is logged as structured JSON (content hash — never raw content �
 go test ./...
 ```
 
-Covers the confidence-gating matrix, date defaulting, JSON-schema shape, and dedup/store behavior. For a live end-to-end check, run the server and try: a normal lead, one containing "ignore previous instructions…", a two-lead message, and a non-English lead.
+Covers the per-field confidence matrix, date defaulting, JSON-schema shape, dedup/store behavior including the legacy-database migration, and the confirm/retry/discard handler paths. For a live end-to-end check, run the server and try: a normal lead, one containing "ignore previous instructions…", a two-lead message, and a non-English lead.
 
 ## Deploying to a VPS (Hetzner)
 

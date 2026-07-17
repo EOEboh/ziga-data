@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,18 +23,27 @@ func TestDedupHashDayBucket(t *testing.T) {
 	}
 }
 
-func TestInsertAndDuplicate(t *testing.T) {
+func openTest(t *testing.T) *Store {
+	t.Helper()
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+func TestInsertAndDuplicate(t *testing.T) {
+	st := openTest(t)
 	ctx := context.Background()
 
 	sub := &Submission{ContentHash: "abc", Status: StatusWritten, Extraction: []byte(`{"need":"x"}`)}
 	dup, err := st.Insert(ctx, sub)
 	if err != nil || dup {
 		t.Fatalf("first insert: dup=%v err=%v", dup, err)
+	}
+	if sub.ID == 0 {
+		t.Fatal("insert must set the id")
 	}
 	dup, err = st.Insert(ctx, sub)
 	if err != nil || !dup {
@@ -50,26 +60,136 @@ func TestInsertAndDuplicate(t *testing.T) {
 	}
 }
 
-func TestListByStatus(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+func TestInputRoundTrip(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	sub := &Submission{
+		ContentHash: "img", Status: StatusPending,
+		InputText: "full pasted text", InputImage: []byte{0x89, 0x50}, InputImageType: "image/png",
+	}
+	if _, err := st.Insert(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(ctx, sub.ID)
+	if err != nil || got == nil {
+		t.Fatalf("get: %+v err=%v", got, err)
+	}
+	if got.InputText != "full pasted text" || got.InputImageType != "image/png" || len(got.InputImage) != 2 {
+		t.Fatalf("input fields not round-tripped: %+v", got)
+	}
+}
+
+func TestGetUpdateDelete(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	sub := &Submission{ContentHash: "a", Status: StatusPending, Extraction: []byte(`{}`)}
+	st.Insert(ctx, sub)
+
+	if err := st.Update(ctx, sub.ID, StatusWritten, []byte(`{"need":"edited"}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Get(ctx, sub.ID)
+	if got.Status != StatusWritten || string(got.Extraction) != `{"need":"edited"}` {
+		t.Fatalf("update not applied: %+v", got)
+	}
+
+	if err := st.Update(ctx, 9999, StatusWritten, nil, ""); err == nil {
+		t.Fatal("update of unknown id must error")
+	}
+
+	if err := st.Delete(ctx, sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := st.Get(ctx, sub.ID)
+	if err != nil || gone != nil {
+		t.Fatalf("expected nil after delete, got %+v err=%v", gone, err)
+	}
+	// Deleting frees the hash for genuine resubmission.
+	dup, err := st.Insert(ctx, &Submission{ContentHash: "a", Status: StatusPending})
+	if err != nil || dup {
+		t.Fatalf("hash should be free after delete: dup=%v err=%v", dup, err)
+	}
+}
+
+func TestListAndCountByStatuses(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	st.Insert(ctx, &Submission{ContentHash: "a", Status: StatusPending})
+	st.Insert(ctx, &Submission{ContentHash: "b", Status: StatusWritten})
+	st.Insert(ctx, &Submission{ContentHash: "c", Status: StatusFailedWrite})
+	st.Insert(ctx, &Submission{ContentHash: "d", Status: StatusPending})
+
+	subs, err := st.ListByStatuses(ctx, []Status{StatusPending, StatusFailedWrite}, 10)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(subs) != 3 {
+		t.Fatalf("expected 3 queued, got %d", len(subs))
+	}
+	if subs[0].ContentHash != "d" {
+		t.Fatalf("expected newest first, got %s", subs[0].ContentHash)
+	}
+
+	n, err := st.CountByStatus(ctx, StatusPending, StatusFailedWrite)
+	if err != nil || n != 3 {
+		t.Fatalf("count = %d err=%v, want 3", n, err)
+	}
+	written, err := st.ListByStatus(ctx, StatusWritten, 10)
+	if err != nil || len(written) != 1 {
+		t.Fatalf("written = %d err=%v", len(written), err)
+	}
+}
+
+// TestMigrateOldSchema opens a database created before the review-pane
+// rework (no input columns, needs_review rows) and proves Open upgrades it.
+func TestMigrateOldSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE submissions (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			content_hash  TEXT NOT NULL UNIQUE,
+			status        TEXT NOT NULL,
+			extraction    TEXT,
+			flags         TEXT,
+			input_excerpt TEXT,
+			error         TEXT,
+			created_at    TEXT NOT NULL
+		);
+		INSERT INTO submissions (content_hash, status, extraction, created_at)
+		VALUES ('old1', 'needs_review', '{"need":"x"}', '2026-07-01T00:00:00Z'),
+		       ('old2', 'written', '{}', '2026-07-01T00:00:00Z');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open over old schema: %v", err)
 	}
 	defer st.Close()
 	ctx := context.Background()
 
-	st.Insert(ctx, &Submission{ContentHash: "a", Status: StatusNeedsReview})
-	st.Insert(ctx, &Submission{ContentHash: "b", Status: StatusWritten})
-	st.Insert(ctx, &Submission{ContentHash: "c", Status: StatusNeedsReview})
-
-	subs, err := st.ListByStatus(ctx, StatusNeedsReview, 10)
-	if err != nil {
-		t.Fatal(err)
+	sub, err := st.FindByHash(ctx, "old1")
+	if err != nil || sub == nil {
+		t.Fatalf("find old row: %+v err=%v", sub, err)
 	}
-	if len(subs) != 2 {
-		t.Fatalf("expected 2 needs_review, got %d", len(subs))
+	if sub.Status != StatusPending {
+		t.Fatalf("needs_review not migrated to pending: %s", sub.Status)
 	}
-	if subs[0].ContentHash != "c" {
-		t.Fatalf("expected newest first, got %s", subs[0].ContentHash)
+	written, _ := st.FindByHash(ctx, "old2")
+	if written.Status != StatusWritten {
+		t.Fatalf("written row must be untouched: %s", written.Status)
+	}
+	// New columns usable on the migrated table.
+	if _, err := st.Insert(ctx, &Submission{ContentHash: "new", Status: StatusPending, InputText: "t"}); err != nil {
+		t.Fatalf("insert after migration: %v", err)
 	}
 }
