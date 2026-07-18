@@ -10,9 +10,10 @@
   <header class="topbar">
     <div class="brand">Ziga Data</div>
     <nav class="views">
-      <a href="#/" data-view="review">Review</a>
-      <a href="#/history" data-view="history">History <span class="badge" id="queue-badge" hidden></span></a>
+      <a href="#/" data-view="review" id="nav-review">Review <span class="badge" id="queue-badge" hidden></span></a>
+      <a href="#/history" data-view="history">History</a>
     </nav>
+    <button type="button" class="btn" id="new-lead-button" hidden>New lead</button>
     <div class="spacer"></div>
     <div class="dropdown" id="destination">
       <button type="button" class="dropdown-toggle" id="destination-toggle" aria-haspopup="menu" aria-expanded="false">

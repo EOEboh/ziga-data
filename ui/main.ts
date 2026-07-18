@@ -28,7 +28,10 @@ const state: {
   submission: Submission | null;
   localImageUrl: string | null;
   preview: PreviewResponse | null;
-} = { phase: "empty", submission: null, localImageUrl: null, preview: null };
+  // composing: the user opened the paste box via "New lead" while queued
+  // items still exist — queue-driven routing must not stomp the compose box.
+  composing: boolean;
+} = { phase: "empty", submission: null, localImageUrl: null, preview: null, composing: false };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -37,17 +40,21 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function enterEmpty(): void {
   state.phase = "empty";
   state.submission = null;
+  state.composing = false;
   releaseLocalImage();
   show($("empty-state"));
   hide($("review-body"));
+  updateNewLeadButton();
   refreshPreviewStrip();
 }
 
 function enterReview(sub: Submission): void {
   state.phase = sub.status === "failed_write" ? "write_failed" : "reviewing";
   state.submission = sub;
+  state.composing = false;
   hide($("empty-state"));
   show($("review-body"));
+  updateNewLeadButton();
 
   renderLeft(sub.input.text ?? "", state.localImageUrl ?? sub.input.image_url ?? null, sub.created_at);
   if (sub.result) renderDetectedSource(sub.result.source);
@@ -59,6 +66,41 @@ function enterReview(sub: Submission): void {
   }
   setConfirmBusy(false);
   refreshPreviewStrip();
+}
+
+// startComposing shows the paste box on demand ("New lead") without touching
+// the queue — pending items stay behind the Review badge.
+function startComposing(): void {
+  state.composing = true;
+  state.phase = "empty";
+  state.submission = null;
+  releaseLocalImage();
+  ($("lead-text") as HTMLTextAreaElement).value = "";
+  const fileInput = $("lead-image") as HTMLInputElement;
+  fileInput.value = "";
+  $("file-name").textContent = "";
+  if (location.hash === "#/history") location.hash = "#/";
+  show($("empty-state"));
+  hide($("review-body"));
+  submitError(null);
+  updateNewLeadButton();
+  refreshBadge();
+}
+
+// openQueue returns from the compose box (or history) to the review queue.
+// A plain hash link is not enough: clicking "#/" while already there fires
+// no hashchange.
+async function openQueue(): Promise<void> {
+  if (!state.composing && !$("review-body").hidden) return; // already on the queue
+  state.composing = false;
+  await advance();
+}
+
+// The "New lead" button shows whenever the paste box itself is not on screen.
+function updateNewLeadButton(): void {
+  const onReview = location.hash !== "#/history";
+  const pasteVisible = onReview && !$("empty-state").hidden;
+  $("new-lead-button").hidden = pasteVisible;
 }
 
 async function startExtraction(): Promise<void> {
@@ -79,8 +121,10 @@ async function startExtraction(): Promise<void> {
   }
 
   state.phase = "extracting";
+  state.composing = false;
   hide($("empty-state"));
   show($("review-body"));
+  updateNewLeadButton();
   renderLeft(text, state.localImageUrl, new Date().toISOString());
   renderSkeleton();
 
@@ -93,7 +137,15 @@ async function startExtraction(): Promise<void> {
     releaseLocalImage();
     show($("empty-state"));
     hide($("review-body"));
+    updateNewLeadButton();
     submitError(err instanceof ApiError ? err.message : "Extraction failed. Try again");
+    return;
+  }
+
+  // If the user hit "New lead" while this extraction was in flight, leave
+  // their fresh compose box alone — the result waits in the queue.
+  if (state.composing) {
+    refreshBadge();
     return;
   }
 
@@ -106,6 +158,7 @@ async function startExtraction(): Promise<void> {
     releaseLocalImage();
     show($("empty-state"));
     hide($("review-body"));
+    updateNewLeadButton();
     submitError("This content was already added today. No new row was created");
     return;
   }
@@ -307,6 +360,7 @@ function applyHash(): void {
       renderHistory({ items: [] });
     });
   }
+  updateNewLeadButton();
 }
 
 // ---- boot ------------------------------------------------------------------------
@@ -320,6 +374,8 @@ async function boot(): Promise<void> {
   $("confirm-button").addEventListener("click", confirm);
   $("retry-button").addEventListener("click", confirm);
   $("discard-button").addEventListener("click", discard);
+  $("new-lead-button").addEventListener("click", startComposing);
+  $("nav-review").addEventListener("click", openQueue);
 
   const fileInput = $("lead-image") as HTMLInputElement;
   $("image-button").addEventListener("click", () => fileInput.click());

@@ -431,21 +431,25 @@
 
   // ui/main.ts
   var api = createApi();
-  var state = { phase: "empty", submission: null, localImageUrl: null, preview: null };
+  var state = { phase: "empty", submission: null, localImageUrl: null, preview: null, composing: false };
   var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   function enterEmpty() {
     state.phase = "empty";
     state.submission = null;
+    state.composing = false;
     releaseLocalImage();
     show($("empty-state"));
     hide($("review-body"));
+    updateNewLeadButton();
     refreshPreviewStrip();
   }
   function enterReview(sub) {
     state.phase = sub.status === "failed_write" ? "write_failed" : "reviewing";
     state.submission = sub;
+    state.composing = false;
     hide($("empty-state"));
     show($("review-body"));
+    updateNewLeadButton();
     renderLeft(sub.input.text ?? "", state.localImageUrl ?? sub.input.image_url ?? null, sub.created_at);
     if (sub.result) renderDetectedSource(sub.result.source);
     renderFields(sub);
@@ -456,6 +460,32 @@
     }
     setConfirmBusy(false);
     refreshPreviewStrip();
+  }
+  function startComposing() {
+    state.composing = true;
+    state.phase = "empty";
+    state.submission = null;
+    releaseLocalImage();
+    $("lead-text").value = "";
+    const fileInput = $("lead-image");
+    fileInput.value = "";
+    $("file-name").textContent = "";
+    if (location.hash === "#/history") location.hash = "#/";
+    show($("empty-state"));
+    hide($("review-body"));
+    submitError(null);
+    updateNewLeadButton();
+    refreshBadge();
+  }
+  async function openQueue() {
+    if (!state.composing && !$("review-body").hidden) return;
+    state.composing = false;
+    await advance();
+  }
+  function updateNewLeadButton() {
+    const onReview = location.hash !== "#/history";
+    const pasteVisible = onReview && !$("empty-state").hidden;
+    $("new-lead-button").hidden = pasteVisible;
   }
   async function startExtraction() {
     const text = $("lead-text").value.trim();
@@ -473,8 +503,10 @@
       state.localImageUrl = URL.createObjectURL(file);
     }
     state.phase = "extracting";
+    state.composing = false;
     hide($("empty-state"));
     show($("review-body"));
+    updateNewLeadButton();
     renderLeft(text, state.localImageUrl, (/* @__PURE__ */ new Date()).toISOString());
     renderSkeleton();
     let sub;
@@ -485,7 +517,12 @@
       releaseLocalImage();
       show($("empty-state"));
       hide($("review-body"));
+      updateNewLeadButton();
       submitError(err instanceof ApiError ? err.message : "Extraction failed. Try again");
+      return;
+    }
+    if (state.composing) {
+      refreshBadge();
       return;
     }
     $("lead-text").value = "";
@@ -496,6 +533,7 @@
       releaseLocalImage();
       show($("empty-state"));
       hide($("review-body"));
+      updateNewLeadButton();
       submitError("This content was already added today. No new row was created");
       return;
     }
@@ -667,6 +705,7 @@
         renderHistory({ items: [] });
       });
     }
+    updateNewLeadButton();
   }
   async function boot() {
     initDestination();
@@ -676,6 +715,8 @@
     $("confirm-button").addEventListener("click", confirm);
     $("retry-button").addEventListener("click", confirm);
     $("discard-button").addEventListener("click", discard);
+    $("new-lead-button").addEventListener("click", startComposing);
+    $("nav-review").addEventListener("click", openQueue);
     const fileInput = $("lead-image");
     $("image-button").addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", () => {
