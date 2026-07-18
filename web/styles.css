@@ -233,6 +233,10 @@ main {
   font-size: 13px;
 }
 
+.rerun-row {
+  margin-top: 12px;
+}
+
 /* ---- fields ------------------------------------------------------------ */
 
 .field-row { margin-bottom: 16px; }
