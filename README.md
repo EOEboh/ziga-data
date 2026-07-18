@@ -100,6 +100,14 @@ The service account only ever touches sheets explicitly shared with it — the a
 
 Every request is logged as structured JSON (content hash — never raw content —, confidence, missing fields, status, duration).
 
+## Live smoke test
+
+```sh
+make smoke
+```
+
+Runs the full submit → confirm → preview flow against a running server (or starts one). It needs a real `OPENAI_API_KEY`; with `SHEET_ID` + `GOOGLE_APPLICATION_CREDENTIALS` set it appends a clearly marked test lead (`SMOKE TEST smoke-<timestamp> … Safe to delete.`) to your real sheet and verifies it comes back through `/api/preview` — delete the row afterwards. Without sheet config it exercises the dry-run destination. A timestamp nonce defeats the same-day dedup, so it can be re-run freely.
+
 ## Customizing the schema
 
 `config/schema.json` defines the extracted fields, which are required (gating), and the sheet column order. The prompt, JSON schema, validation, and sheet writer are all driven from it — per-user custom schemas later only need a config per user, not code changes.
