@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EOEboh/sheetdrop/internal/config"
-	"github.com/EOEboh/sheetdrop/internal/llm"
+	"github.com/EOEboh/ziga/internal/config"
+	"github.com/EOEboh/ziga/internal/llm"
 )
 
 func strp(s string) *string { return &s }

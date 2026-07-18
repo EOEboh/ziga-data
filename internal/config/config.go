@@ -67,7 +67,7 @@ func Load() (*Config, error) {
 		SheetID:         os.Getenv("SHEET_ID"),
 		SheetTab:        envOr("SHEET_TAB", "Leads"),
 		Port:            envOr("PORT", "8080"),
-		DBPath:          envOr("DB_PATH", "./sheetdrop.db"),
+		DBPath:          envOr("DB_PATH", "./ziga.db"),
 		SchemaPath:      envOr("SCHEMA_PATH", "config/schema.json"),
 		RatePerMin:      10,
 	}

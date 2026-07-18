@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/EOEboh/sheetdrop/internal/store"
+	"github.com/EOEboh/ziga/internal/store"
 )
 
 const previewRows = 3

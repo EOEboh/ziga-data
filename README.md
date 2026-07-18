@@ -1,6 +1,6 @@
-# SheetDrop
+# Ziga Data
 
-Paste unstructured lead info — text, a forwarded email, or a screenshot — and SheetDrop extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
+Paste unstructured lead info — text, a forwarded email, or a screenshot — and Ziga Data extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
 
 - **Backend**: Go, no framework
 - **Frontend**: server-served static files; TypeScript compiled to one plain-JS bundle (`web/app.js`, committed), plain CSS with custom properties. No framework, no SPA.
@@ -22,10 +22,12 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 Requirements: Go 1.22+.
 
 ```sh
-git clone https://github.com/EOEboh/sheetdrop && cd sheetdrop
+git clone https://github.com/EOEboh/ziga && cd ziga
 cp .env.example .env   # fill in values
 go run ./cmd/server
 ```
+
+> The GitHub repository rename to `ziga` is done manually outside this codebase; until it lands, clone from the old URL (GitHub redirects after a rename). If you have a local database under the old default name, rename it to `ziga.db` or point `DB_PATH` at it.
 
 The server loads `.env` from the working directory automatically; variables already exported in your shell take precedence over the file.
 
@@ -55,7 +57,7 @@ Open http://localhost:8080/?mock=1 to drive the UI against built-in fixtures (al
 | `SHEET_TAB` | | `Leads` | Worksheet tab to append to |
 | `LLM_MODEL` | | `gpt-5.4-nano` | Any vision-capable OpenAI chat model |
 | `PORT` | | `8080` | HTTP port |
-| `DB_PATH` | | `./sheetdrop.db` | SQLite file |
+| `DB_PATH` | | `./ziga.db` | SQLite file |
 | `SCHEMA_PATH` | | `config/schema.json` | Extraction schema + column mapping |
 | `RATE_LIMIT_PER_MIN` | | `10` | Per-IP submissions per minute (burst 5) |
 
@@ -107,34 +109,46 @@ Covers the per-field confidence matrix, date defaulting, JSON-schema shape, dedu
 ## Deploying to a VPS (Hetzner)
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o sheetdrop ./cmd/server
-scp sheetdrop config/schema.json service-account.json you@your-vps:/opt/sheetdrop/
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ziga ./cmd/server
+scp ziga config/schema.json service-account.json you@your-vps:/opt/ziga/
 ```
 
-`/etc/systemd/system/sheetdrop.service`:
+`/etc/systemd/system/ziga.service`:
 
 ```ini
 [Unit]
-Description=SheetDrop
+Description=Ziga Data
 After=network.target
 
 [Service]
-WorkingDirectory=/opt/sheetdrop
-ExecStart=/opt/sheetdrop/sheetdrop
+WorkingDirectory=/opt/ziga
+ExecStart=/opt/ziga/ziga
 Environment=OPENAI_API_KEY=sk-...
-Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/sheetdrop/service-account.json
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/ziga/service-account.json
 Environment=SHEET_ID=...
-Environment=SCHEMA_PATH=/opt/sheetdrop/schema.json
-Environment=DB_PATH=/opt/sheetdrop/sheetdrop.db
+Environment=SCHEMA_PATH=/opt/ziga/schema.json
+Environment=DB_PATH=/opt/ziga/ziga.db
 Restart=on-failure
-User=sheetdrop
+User=ziga
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```sh
-sudo systemctl enable --now sheetdrop
+sudo systemctl enable --now ziga
 ```
 
 Put it behind your existing nginx/caddy with TLS; the rate limiter reads `X-Forwarded-For`, so forwarding that header from the proxy is enough.
+
+## TODO
+
+Deliberately out of scope for now:
+
+- Queue navigation (prev/next between queued items; today the review pane auto-advances FIFO)
+- Multi-lead extraction (splitting one paste into several rows; today only the primary lead is extracted and a banner is shown)
+- History depth (pagination/search beyond the last 50 written submissions)
+
+## Changelog
+
+- 2026-07 — renamed to **Ziga Data** (formerly sheetdrop)

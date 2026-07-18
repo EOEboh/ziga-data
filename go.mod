@@ -1,4 +1,4 @@
-module github.com/EOEboh/sheetdrop
+module github.com/EOEboh/ziga
 
 go 1.25.4
 

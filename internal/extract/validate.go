@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/EOEboh/sheetdrop/internal/config"
-	"github.com/EOEboh/sheetdrop/internal/llm"
+	"github.com/EOEboh/ziga/internal/config"
+	"github.com/EOEboh/ziga/internal/llm"
 )
 
 // FieldState is the per-field review state the UI renders.

@@ -10,13 +10,13 @@ import (
 	"strings"
 	"sync"
 
-	sheetdrop "github.com/EOEboh/sheetdrop"
-	"github.com/EOEboh/sheetdrop/internal/config"
-	"github.com/EOEboh/sheetdrop/internal/extract"
-	"github.com/EOEboh/sheetdrop/internal/httpapi"
-	"github.com/EOEboh/sheetdrop/internal/llm"
-	"github.com/EOEboh/sheetdrop/internal/sheets"
-	"github.com/EOEboh/sheetdrop/internal/store"
+	ziga "github.com/EOEboh/ziga"
+	"github.com/EOEboh/ziga/internal/config"
+	"github.com/EOEboh/ziga/internal/extract"
+	"github.com/EOEboh/ziga/internal/httpapi"
+	"github.com/EOEboh/ziga/internal/llm"
+	"github.com/EOEboh/ziga/internal/sheets"
+	"github.com/EOEboh/ziga/internal/store"
 )
 
 // dryRunWriter stands in for Google Sheets when SHEET_ID or credentials are
@@ -99,7 +99,7 @@ func main() {
 		writer = &dryRunWriter{log: log}
 	}
 
-	static, err := fs.Sub(sheetdrop.WebFS, "web")
+	static, err := fs.Sub(ziga.WebFS, "web")
 	if err != nil {
 		log.Error("embed", "err", err)
 		os.Exit(1)

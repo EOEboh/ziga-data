@@ -3,9 +3,8 @@
 service-account*.json
 
 # Local state
-sheetdrop.db
 *.db
 
 # Build output
-/sheetdrop
+/ziga
 node_modules/

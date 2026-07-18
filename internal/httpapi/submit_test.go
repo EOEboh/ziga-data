@@ -15,10 +15,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/EOEboh/sheetdrop/internal/config"
-	"github.com/EOEboh/sheetdrop/internal/extract"
-	"github.com/EOEboh/sheetdrop/internal/llm"
-	"github.com/EOEboh/sheetdrop/internal/store"
+	"github.com/EOEboh/ziga/internal/config"
+	"github.com/EOEboh/ziga/internal/extract"
+	"github.com/EOEboh/ziga/internal/llm"
+	"github.com/EOEboh/ziga/internal/store"
 )
 
 type fakeExtractor struct {

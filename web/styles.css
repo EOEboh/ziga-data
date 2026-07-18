@@ -1,4 +1,4 @@
-/* sheetdrop visual system — light theme v1.
+/* Ziga Data visual system — light theme v1.
    All colors live in custom properties so a dark theme is a :root override,
    not a refactor. Semantic amber/red are reserved for extraction confidence
    states and must never be used decoratively. */
