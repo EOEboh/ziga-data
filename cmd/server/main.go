@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+
+	// The SQLite file is the only local state — logged so backup scripts can
+	// pick the path up from the boot output.
+	dbPath := cfg.DBPath
+	if abs, err := filepath.Abs(dbPath); err == nil {
+		dbPath = abs
+	}
+	log.Info("sqlite store open", "path", dbPath)
 
 	// Retention: raw originals (full input text, image blobs) are purged
 	// RETENTION_DAYS after a submission settles; extraction results stay.

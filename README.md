@@ -144,6 +144,8 @@ sudo systemctl enable --now ziga
 
 Put it behind your existing nginx/caddy with TLS; the rate limiter reads `X-Forwarded-For`, so forwarding that header from the proxy is enough.
 
+**Backups.** Back up the SQLite file at `DB_PATH` (default `./ziga.db`; the resolved absolute path is logged at boot as `sqlite store open`) — it holds the dedup keys, the review queue, and history. The Google Sheet only holds confirmed rows, so it is not a substitute for backing up the database.
+
 ## TODO
 
 Deliberately out of scope for now:
