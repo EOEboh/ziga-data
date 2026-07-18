@@ -63,16 +63,19 @@ Open http://localhost:8080/?mock=1 to drive the UI against built-in fixtures (al
 | `SCHEMA_PATH` | | `config/schema.json` | Extraction schema + column mapping |
 | `RATE_LIMIT_PER_MIN` | | `10` | Per-IP submissions per minute (burst 5) |
 | `RETENTION_DAYS` | | `14` | Days after confirm/discard before the raw original input (full text, image) is purged |
+| `HEADER_ROW` | | `1` | `1`/`true`: row 1 of the tab is a header, auto-written on first confirm if the tab is empty. `0`/`none`/`false`: no header row |
 
 ## Pointing it at a real Google Sheet
 
 1. In [Google Cloud Console](https://console.cloud.google.com), create (or pick) a project and **enable the Google Sheets API**.
 2. Create a **service account** (IAM & Admin → Service Accounts). No project roles are needed.
 3. Create a **JSON key** for it and save the file next to the binary; point `GOOGLE_APPLICATION_CREDENTIALS` at it.
-4. Create your sheet with a tab named `Leads` and this header row (must match `columns` in `config/schema.json`):
+4. Create your sheet with a tab named `Leads`. You can leave the tab completely empty — with the default `HEADER_ROW=1` the first confirm writes this header row (the `columns` from `config/schema.json`) automatically:
 
    | date | name | contact | source | need | notes | flags |
    |------|------|---------|--------|------|-------|-------|
+
+   If your tab has data but no header row, set `HEADER_ROW=none`.
 
 5. **Share the sheet** (editor access) with the service account's email (`...@<project>.iam.gserviceaccount.com`).
 6. Set `SHEET_ID` to the ID from the sheet URL and restart.
@@ -88,7 +91,7 @@ The service account only ever touches sheets explicitly shared with it — the a
 | `POST /api/submissions/{id}/discard` | soft-delete a pending/failed submission: row retained as `discarded`, same-day dedup hash freed. Idempotent; discarded items leave the queue and history |
 | `GET /api/submissions/{id}/image` | the original uploaded image |
 | `GET /api/queue` | pending + failed submissions, newest 100, with `count` for the badge |
-| `GET /api/preview` | last 3 data rows of the connected sheet (assumes row 1 is the header) |
+| `GET /api/preview` | last 3 data rows of the connected sheet (row 1 is treated as a header unless `HEADER_ROW=none`; empty sheets preview as empty) |
 | `GET /api/destination` | connected destination for the picker |
 | `GET /api/history` | last 50 written submissions |
 | `GET /healthz` | liveness |
