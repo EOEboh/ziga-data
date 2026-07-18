@@ -93,7 +93,7 @@ The service account only ever touches sheets explicitly shared with it — the a
 | `GET /api/history` | last 50 written submissions |
 | `GET /healthz` | liveness |
 
-`status` is `pending` / `written` / `failed_write` / `discarded`. Only `/api/submit` is rate-limited (it is the only LLM-cost endpoint).
+`status` is `pending` / `written` / `failed_write` / `discarded`. `/api/submit` (LLM cost) and `/api/submissions/{id}/confirm` (Google Sheets quota) share one per-IP rate-limit budget (`RATE_LIMIT_PER_MIN`).
 
 Every request is logged as structured JSON (content hash — never raw content —, confidence, missing fields, status, duration).
 

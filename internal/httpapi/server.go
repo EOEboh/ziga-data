@@ -27,13 +27,16 @@ type Server struct {
 	extractor llm.Extractor
 	store     *store.Store
 	writer    RowWriter
+	// limiter is the single per-IP budget shared by every rate-limited
+	// endpoint: submit (LLM cost) and confirm (Google Sheets quota).
+	limiter *ipLimiter
 	// confirmMu serializes confirms; concurrent confirms of the same
 	// submission would otherwise append duplicate sheet rows.
 	confirmMu sync.Mutex
 }
 
 func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter) *Server {
-	return &Server{cfg: cfg, log: log, extractor: ex, store: st, writer: w}
+	return &Server{cfg: cfg, log: log, extractor: ex, store: st, writer: w, limiter: newIPLimiter(cfg.RatePerMin)}
 }
 
 // Handler builds the full route tree. static is the embedded web/ directory.
@@ -44,7 +47,7 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 		w.Write([]byte("ok"))
 	})
 	mux.Handle("POST /api/submit", s.rateLimit(http.HandlerFunc(s.handleSubmit)))
-	mux.HandleFunc("POST /api/submissions/{id}/confirm", s.handleConfirm)
+	mux.Handle("POST /api/submissions/{id}/confirm", s.rateLimit(http.HandlerFunc(s.handleConfirm)))
 	mux.HandleFunc("POST /api/submissions/{id}/discard", s.handleDiscard)
 	mux.HandleFunc("GET /api/submissions/{id}/image", s.handleImage)
 	mux.HandleFunc("GET /api/queue", s.handleQueue)

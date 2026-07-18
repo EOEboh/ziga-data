@@ -65,10 +65,11 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// rateLimit enforces the server's shared per-IP limiter, so all wrapped
+// endpoints draw from one budget.
 func (s *Server) rateLimit(next http.Handler) http.Handler {
-	limiter := newIPLimiter(s.cfg.RatePerMin)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.get(clientIP(r)).Allow() {
+		if !s.limiter.get(clientIP(r)).Allow() {
 			httpError(w, http.StatusTooManyRequests, "rate limit exceeded — slow down")
 			return
 		}

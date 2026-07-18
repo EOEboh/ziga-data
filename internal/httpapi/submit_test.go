@@ -302,6 +302,47 @@ func TestDiscardFreesSubmission(t *testing.T) {
 	}
 }
 
+// TestSubmitAndConfirmShareRateLimit proves both endpoints draw from one
+// per-IP budget: with RATE_LIMIT_PER_MIN=1 (burst 5, negligible refill),
+// five requests in any mix exhaust it and the sixth 429s on either endpoint.
+func TestSubmitAndConfirmShareRateLimit(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg := &config.Config{
+		RatePerMin: 1,
+		SheetTab:   "Leads",
+		Schema: config.Schema{
+			RequiredFields: []string{"contact", "need"},
+			Fields: []config.Field{
+				{Name: "name"}, {Name: "contact"}, {Name: "source"},
+				{Name: "need"}, {Name: "date"}, {Name: "notes"},
+			},
+			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
+		},
+	}
+	s := New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{})
+	h := handler(s)
+
+	rec, sub := postText(t, h, "Jane wants a logo, jane@x.com") // token 1
+	if rec.Code != 200 {
+		t.Fatalf("submit code=%d", rec.Code)
+	}
+	for i := 0; i < 4; i++ { // tokens 2-5; app-level statuses (200 then 409) are fine
+		if crec, _ := postConfirm(t, h, sub.ID, nil); crec.Code == 429 {
+			t.Fatalf("confirm %d hit the limit early", i)
+		}
+	}
+	if crec, _ := postConfirm(t, h, sub.ID, nil); crec.Code != 429 {
+		t.Fatalf("6th request (confirm) code=%d, want 429", crec.Code)
+	}
+	if srec, _ := postText(t, h, "another lead"); srec.Code != 429 {
+		t.Fatalf("7th request (submit) code=%d, want 429 from the shared budget", srec.Code)
+	}
+}
+
 func TestConfirmAfterDiscardRejected(t *testing.T) {
 	w := &fakeWriter{}
 	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
