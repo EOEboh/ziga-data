@@ -17,6 +17,8 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 5. `POST /api/submissions/{id}/confirm` writes the (possibly edited) row to your sheet (3 attempts, exponential backoff). A terminal failure keeps the submission as `failed_write` with the edited data intact; the Retry button is the same confirm call
 6. If multiple leads are detected in one submission, only the primary one is extracted and the review pane shows a banner
 
+**Dedup semantics.** The dedup key is the SHA-256 of the submitted content plus a UTC day bucket, so identical content is blocked for the rest of the day — except after a discard. Discarding is a *soft delete*: the row is kept with status `discarded` (its original input is later purged, see retention), but its dedup hash is rewritten to a per-row tombstone, so discarding a submission immediately frees its content for genuine resubmission the same day. Discarded submissions never appear in the queue or history and can no longer be confirmed.
+
 ## Local setup
 
 Requirements: Go 1.22+.
@@ -82,7 +84,7 @@ The service account only ever touches sheets explicitly shared with it — the a
 |---|---|
 | `POST /api/submit` | multipart form: `text` and/or `image`. Extract-only — stores a `pending` submission and returns `{id, status, result, field_states, flags, input, created_at}`. Writes nothing to the sheet |
 | `POST /api/submissions/{id}/confirm` | body `{"fields": {name: value, ...}}` with the reviewed values. The only path that appends a sheet row. Accepts `pending` and `failed_write` (retry = same call); `409` once written, `422` if a required field is still empty |
-| `POST /api/submissions/{id}/discard` | delete a pending/failed submission (frees the same-day dedup hash) |
+| `POST /api/submissions/{id}/discard` | soft-delete a pending/failed submission: row retained as `discarded`, same-day dedup hash freed. Idempotent; discarded items leave the queue and history |
 | `GET /api/submissions/{id}/image` | the original uploaded image |
 | `GET /api/queue` | pending + failed submissions, newest 100, with `count` for the badge |
 | `GET /api/preview` | last 3 data rows of the connected sheet (assumes row 1 is the header) |
@@ -90,7 +92,7 @@ The service account only ever touches sheets explicitly shared with it — the a
 | `GET /api/history` | last 50 written submissions |
 | `GET /healthz` | liveness |
 
-`status` is `pending` / `written` / `failed_write`. Only `/api/submit` is rate-limited (it is the only LLM-cost endpoint).
+`status` is `pending` / `written` / `failed_write` / `discarded`. Only `/api/submit` is rate-limited (it is the only LLM-cost endpoint).
 
 Every request is logged as structured JSON (content hash — never raw content —, confidence, missing fields, status, duration).
 

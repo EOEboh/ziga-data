@@ -22,6 +22,7 @@ const (
 	StatusPending     Status = "pending" // extracted, awaiting user confirm
 	StatusWritten     Status = "written"
 	StatusFailedWrite Status = "failed_write"
+	StatusDiscarded   Status = "discarded" // soft-deleted; row retained, dedup hash freed
 )
 
 // Submission is one processed submission.
@@ -226,10 +227,17 @@ func (s *Store) Update(ctx context.Context, id int64, status Status, extraction 
 	return nil
 }
 
-// Delete removes a submission (discard). Hard delete: it frees the content
-// hash so the same content can be genuinely resubmitted the same day.
-func (s *Store) Delete(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM submissions WHERE id = ?`, id)
+// Discard soft-deletes a submission: the row is retained with status
+// discarded, and the content hash is rewritten to a per-row tombstone
+// ("discarded:{id}:{hash}") so the UNIQUE constraint stays satisfied while
+// the original hash is freed — the same content can be genuinely resubmitted
+// the same day. Discarding an already-discarded submission is a no-op.
+func (s *Store) Discard(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE submissions
+		SET status = ?, content_hash = 'discarded:' || id || ':' || content_hash
+		WHERE id = ? AND status != ?`,
+		StatusDiscarded, id, StatusDiscarded)
 	return err
 }
 

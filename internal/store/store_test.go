@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func TestInputRoundTrip(t *testing.T) {
 	}
 }
 
-func TestGetUpdateDelete(t *testing.T) {
+func TestGetUpdateDiscard(t *testing.T) {
 	st := openTest(t)
 	ctx := context.Background()
 
@@ -99,17 +100,36 @@ func TestGetUpdateDelete(t *testing.T) {
 		t.Fatal("update of unknown id must error")
 	}
 
-	if err := st.Delete(ctx, sub.ID); err != nil {
+	if err := st.Discard(ctx, sub.ID); err != nil {
 		t.Fatal(err)
 	}
-	gone, err := st.Get(ctx, sub.ID)
-	if err != nil || gone != nil {
-		t.Fatalf("expected nil after delete, got %+v err=%v", gone, err)
+	// Soft delete: the row survives with a tombstoned hash.
+	kept, err := st.Get(ctx, sub.ID)
+	if err != nil || kept == nil {
+		t.Fatalf("row must survive discard, got %+v err=%v", kept, err)
 	}
-	// Deleting frees the hash for genuine resubmission.
+	if kept.Status != StatusDiscarded {
+		t.Fatalf("status = %s, want discarded", kept.Status)
+	}
+	wantHash := fmt.Sprintf("discarded:%d:a", sub.ID)
+	if kept.ContentHash != wantHash {
+		t.Fatalf("hash = %s, want %s", kept.ContentHash, wantHash)
+	}
+	if found, _ := st.FindByHash(ctx, "a"); found != nil {
+		t.Fatalf("original hash must be freed, found %+v", found)
+	}
+	// Discarding frees the hash for genuine resubmission.
 	dup, err := st.Insert(ctx, &Submission{ContentHash: "a", Status: StatusPending})
 	if err != nil || dup {
-		t.Fatalf("hash should be free after delete: dup=%v err=%v", dup, err)
+		t.Fatalf("hash should be free after discard: dup=%v err=%v", dup, err)
+	}
+	// A second discard is a no-op: no double tombstone.
+	if err := st.Discard(ctx, sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := st.Get(ctx, sub.ID)
+	if again.ContentHash != wantHash {
+		t.Fatalf("double discard rewrote the hash: %s", again.ContentHash)
 	}
 }
 

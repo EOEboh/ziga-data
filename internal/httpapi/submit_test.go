@@ -269,7 +269,8 @@ func TestConfirmUnknownSubmission(t *testing.T) {
 }
 
 func TestDiscardFreesSubmission(t *testing.T) {
-	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{})
+	ex := &fakeExtractor{result: goodResult()}
+	s := testServer(t, ex, &fakeWriter{})
 	h := handler(s)
 	_, sub := postText(t, h, "Jane wants a logo")
 
@@ -279,9 +280,45 @@ func TestDiscardFreesSubmission(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("discard code=%d", rec.Code)
 	}
-	gone, _ := s.store.Get(context.Background(), sub.ID)
-	if gone != nil {
-		t.Fatal("discarded submission must be deleted")
+	// Soft delete: the row is retained but leaves the queue and frees the
+	// dedup hash for genuine resubmission.
+	kept, _ := s.store.Get(context.Background(), sub.ID)
+	if kept == nil || kept.Status != store.StatusDiscarded {
+		t.Fatalf("discarded submission must be retained with status discarded, got %+v", kept)
+	}
+	_, resub := postText(t, h, "Jane wants a logo")
+	if resub.Duplicate || resub.ID == sub.ID {
+		t.Fatalf("resubmit after discard must create a new submission: %+v", resub)
+	}
+	if ex.calls != 2 {
+		t.Fatalf("resubmit must re-extract, calls=%d", ex.calls)
+	}
+
+	// A second discard is idempotent.
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest("POST", fmt.Sprintf("/api/submissions/%d/discard", sub.ID), nil))
+	if rec2.Code != 200 {
+		t.Fatalf("second discard code=%d", rec2.Code)
+	}
+}
+
+func TestConfirmAfterDiscardRejected(t *testing.T) {
+	w := &fakeWriter{}
+	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", fmt.Sprintf("/api/submissions/%d/discard", sub.ID), nil))
+	if rec.Code != 200 {
+		t.Fatalf("discard code=%d", rec.Code)
+	}
+	crec, _ := postConfirm(t, h, sub.ID, nil)
+	if crec.Code != 409 {
+		t.Fatalf("confirm after discard code=%d, want 409", crec.Code)
+	}
+	if len(w.rows) != 0 {
+		t.Fatal("discarded submission must never reach the sheet")
 	}
 }
 
