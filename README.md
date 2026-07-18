@@ -6,7 +6,7 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 - **Frontend**: server-served static files; TypeScript compiled to one plain-JS bundle (`web/app.js`, committed), plain CSS with custom properties. No framework, no SPA.
 - **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Destination**: Google Sheets API with a service account — you share your sheet with the service account's email; no OAuth flow.
-- **Storage**: a single SQLite file for dedup keys, pending reviews, failed writes, and history.
+- **Storage**: a single SQLite file for dedup keys, pending reviews, failed writes, and history. Raw originals (full pasted text, uploaded images) are purged `RETENTION_DAYS` (default 14) after a submission is confirmed or discarded — extraction results and the short excerpt stay. The cleanup runs at boot and daily.
 
 ## How a submission flows
 
@@ -62,6 +62,7 @@ Open http://localhost:8080/?mock=1 to drive the UI against built-in fixtures (al
 | `DB_PATH` | | `./ziga.db` | SQLite file |
 | `SCHEMA_PATH` | | `config/schema.json` | Extraction schema + column mapping |
 | `RATE_LIMIT_PER_MIN` | | `10` | Per-IP submissions per minute (burst 5) |
+| `RETENTION_DAYS` | | `14` | Days after confirm/discard before the raw original input (full text, image) is purged |
 
 ## Pointing it at a real Google Sheet
 

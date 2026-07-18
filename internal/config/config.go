@@ -40,6 +40,7 @@ type Config struct {
 	Port            string
 	DBPath          string
 	RatePerMin      int
+	RetentionDays   int
 	SchemaPath      string
 	Schema          Schema
 }
@@ -70,6 +71,7 @@ func Load() (*Config, error) {
 		DBPath:          envOr("DB_PATH", "./ziga.db"),
 		SchemaPath:      envOr("SCHEMA_PATH", "config/schema.json"),
 		RatePerMin:      10,
+		RetentionDays:   14,
 	}
 	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -77,6 +79,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid RATE_LIMIT_PER_MIN %q", v)
 		}
 		cfg.RatePerMin = n
+	}
+	if v := os.Getenv("RETENTION_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid RETENTION_DAYS %q", v)
+		}
+		cfg.RetentionDays = n
 	}
 
 	raw, err := os.ReadFile(cfg.SchemaPath)

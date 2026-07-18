@@ -38,6 +38,7 @@ type Submission struct {
 	InputImageType string // e.g. "image/png"
 	Error          string
 	CreatedAt      time.Time
+	SettledAt      time.Time // when the submission reached written or discarded; zero otherwise
 }
 
 type Store struct {
@@ -64,7 +65,8 @@ func Open(path string) (*Store, error) {
 			input_image      BLOB,
 			input_image_type TEXT,
 			error            TEXT,
-			created_at       TEXT NOT NULL
+			created_at       TEXT NOT NULL,
+			settled_at       TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 	`); err != nil {
@@ -108,6 +110,7 @@ func migrate(db *sql.DB) error {
 		"input_text":       "TEXT",
 		"input_image":      "BLOB",
 		"input_image_type": "TEXT",
+		"settled_at":       "TEXT",
 	} {
 		if !have[col] {
 			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE submissions ADD COLUMN %s %s`, col, typ)); err != nil {
@@ -116,7 +119,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
-	_, err = db.Exec(`UPDATE submissions SET status = ? WHERE status = 'needs_review'`, StatusPending)
+	if _, err := db.Exec(`UPDATE submissions SET status = ? WHERE status = 'needs_review'`, StatusPending); err != nil {
+		return err
+	}
+
+	// Rows settled before settled_at existed: approximate with created_at so
+	// the retention purge eventually reaches them.
+	_, err = db.Exec(`
+		UPDATE submissions SET settled_at = created_at
+		WHERE settled_at IS NULL AND status IN (?, ?)`,
+		StatusWritten, StatusDiscarded)
 	return err
 }
 
@@ -134,7 +146,7 @@ func ContentHash(text string, image []byte, submitted time.Time) string {
 }
 
 const submissionCols = `id, content_hash, status, extraction, flags, input_excerpt,
-	input_text, input_image, input_image_type, error, created_at`
+	input_text, input_image, input_image_type, error, created_at, settled_at`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -143,9 +155,9 @@ type scanner interface {
 func scanSubmission(row scanner) (*Submission, error) {
 	var sub Submission
 	var createdAt string
-	var extraction, flags, excerpt, inputText, imageType, errMsg sql.NullString
+	var extraction, flags, excerpt, inputText, imageType, errMsg, settledAt sql.NullString
 	if err := row.Scan(&sub.ID, &sub.ContentHash, &sub.Status, &extraction, &flags,
-		&excerpt, &inputText, &sub.InputImage, &imageType, &errMsg, &createdAt); err != nil {
+		&excerpt, &inputText, &sub.InputImage, &imageType, &errMsg, &createdAt, &settledAt); err != nil {
 		return nil, err
 	}
 	sub.Extraction = []byte(extraction.String)
@@ -155,6 +167,9 @@ func scanSubmission(row scanner) (*Submission, error) {
 	sub.InputImageType = imageType.String
 	sub.Error = errMsg.String
 	sub.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if settledAt.Valid {
+		sub.SettledAt, _ = time.Parse(time.RFC3339, settledAt.String)
+	}
 	return &sub, nil
 }
 
@@ -209,11 +224,16 @@ func (s *Store) Insert(ctx context.Context, sub *Submission) (duplicate bool, er
 }
 
 // Update sets the status, extraction blob (the user may have edited fields
-// before confirming), and error message for one submission.
+// before confirming), and error message for one submission. Reaching a
+// settled status (written / discarded) stamps settled_at once, which starts
+// the retention clock for purging the original input.
 func (s *Store) Update(ctx context.Context, id int64, status Status, extraction []byte, errMsg string) error {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE submissions SET status = ?, extraction = ?, error = ? WHERE id = ?`,
-		status, string(extraction), errMsg, id)
+		UPDATE submissions SET status = ?, extraction = ?, error = ?,
+			settled_at = CASE WHEN ? IN (?, ?) THEN COALESCE(settled_at, ?) ELSE settled_at END
+		WHERE id = ?`,
+		status, string(extraction), errMsg,
+		status, StatusWritten, StatusDiscarded, time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return err
 	}
@@ -235,10 +255,29 @@ func (s *Store) Update(ctx context.Context, id int64, status Status, extraction 
 func (s *Store) Discard(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE submissions
-		SET status = ?, content_hash = 'discarded:' || id || ':' || content_hash
+		SET status = ?, content_hash = 'discarded:' || id || ':' || content_hash,
+			settled_at = COALESCE(settled_at, ?)
 		WHERE id = ? AND status != ?`,
-		StatusDiscarded, id, StatusDiscarded)
+		StatusDiscarded, time.Now().UTC().Format(time.RFC3339), id, StatusDiscarded)
 	return err
+}
+
+// PurgeInputs nulls the stored original input (full text, image blob, image
+// type) of submissions settled before the cutoff. Extraction results and the
+// short excerpt are kept — only raw originals are purged. Returns the number
+// of rows purged.
+func (s *Store) PurgeInputs(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE submissions
+		SET input_text = NULL, input_image = NULL, input_image_type = NULL
+		WHERE status IN (?, ?)
+		  AND settled_at IS NOT NULL AND settled_at < ?
+		  AND (input_text IS NOT NULL OR input_image IS NOT NULL)`,
+		StatusWritten, StatusDiscarded, cutoff.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ListByStatus returns submissions in a given state, newest first.

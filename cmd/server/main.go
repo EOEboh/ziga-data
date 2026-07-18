@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	ziga "github.com/EOEboh/ziga"
 	"github.com/EOEboh/ziga/internal/config"
@@ -77,6 +78,26 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+
+	// Retention: raw originals (full input text, image blobs) are purged
+	// RETENTION_DAYS after a submission settles; extraction results stay.
+	purge := func() {
+		cutoff := time.Now().UTC().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour)
+		n, err := st.PurgeInputs(context.Background(), cutoff)
+		if err != nil {
+			log.Error("retention purge", "err", err)
+			return
+		}
+		if n > 0 {
+			log.Info("retention purge", "purged", n, "retention_days", cfg.RetentionDays)
+		}
+	}
+	purge()
+	go func() {
+		for range time.Tick(24 * time.Hour) {
+			purge()
+		}
+	}()
 
 	extractor := llm.NewOpenAIExtractor(
 		cfg.LLMModel,
