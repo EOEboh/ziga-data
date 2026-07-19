@@ -76,3 +76,50 @@ func TestLoadWithoutDotEnvStillWorks(t *testing.T) {
 		t.Fatalf("OpenAIAPIKey = %q", cfg.OpenAIAPIKey)
 	}
 }
+
+func TestHeaderRow(t *testing.T) {
+	setup(t)
+
+	for _, v := range []string{"", "1", "true", "TRUE"} {
+		t.Setenv("HEADER_ROW", v)
+		cfg, err := Load()
+		if err != nil || !cfg.HeaderRow {
+			t.Fatalf("HEADER_ROW=%q: HeaderRow=%v err=%v, want true", v, cfg != nil && cfg.HeaderRow, err)
+		}
+	}
+	for _, v := range []string{"0", "none", "false", "None"} {
+		t.Setenv("HEADER_ROW", v)
+		cfg, err := Load()
+		if err != nil || cfg.HeaderRow {
+			t.Fatalf("HEADER_ROW=%q: HeaderRow=%v err=%v, want false", v, cfg != nil && cfg.HeaderRow, err)
+		}
+	}
+	t.Setenv("HEADER_ROW", "banana")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid HEADER_ROW must be rejected")
+	}
+}
+
+func TestRetentionDays(t *testing.T) {
+	setup(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RetentionDays != 14 {
+		t.Fatalf("RetentionDays default = %d, want 14", cfg.RetentionDays)
+	}
+
+	t.Setenv("RETENTION_DAYS", "30")
+	cfg, err = Load()
+	if err != nil || cfg.RetentionDays != 30 {
+		t.Fatalf("RetentionDays = %d err=%v, want 30", cfg.RetentionDays, err)
+	}
+
+	for _, bad := range []string{"0", "-1", "abc"} {
+		t.Setenv("RETENTION_DAYS", bad)
+		if _, err := Load(); err == nil {
+			t.Fatalf("RETENTION_DAYS=%q must be rejected", bad)
+		}
+	}
+}

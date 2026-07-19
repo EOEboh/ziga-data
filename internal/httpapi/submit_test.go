@@ -15,10 +15,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/EOEboh/sheetdrop/internal/config"
-	"github.com/EOEboh/sheetdrop/internal/extract"
-	"github.com/EOEboh/sheetdrop/internal/llm"
-	"github.com/EOEboh/sheetdrop/internal/store"
+	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/extract"
+	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/store"
 )
 
 type fakeExtractor struct {
@@ -269,7 +269,8 @@ func TestConfirmUnknownSubmission(t *testing.T) {
 }
 
 func TestDiscardFreesSubmission(t *testing.T) {
-	s := testServer(t, &fakeExtractor{result: goodResult()}, &fakeWriter{})
+	ex := &fakeExtractor{result: goodResult()}
+	s := testServer(t, ex, &fakeWriter{})
 	h := handler(s)
 	_, sub := postText(t, h, "Jane wants a logo")
 
@@ -279,9 +280,86 @@ func TestDiscardFreesSubmission(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("discard code=%d", rec.Code)
 	}
-	gone, _ := s.store.Get(context.Background(), sub.ID)
-	if gone != nil {
-		t.Fatal("discarded submission must be deleted")
+	// Soft delete: the row is retained but leaves the queue and frees the
+	// dedup hash for genuine resubmission.
+	kept, _ := s.store.Get(context.Background(), sub.ID)
+	if kept == nil || kept.Status != store.StatusDiscarded {
+		t.Fatalf("discarded submission must be retained with status discarded, got %+v", kept)
+	}
+	_, resub := postText(t, h, "Jane wants a logo")
+	if resub.Duplicate || resub.ID == sub.ID {
+		t.Fatalf("resubmit after discard must create a new submission: %+v", resub)
+	}
+	if ex.calls != 2 {
+		t.Fatalf("resubmit must re-extract, calls=%d", ex.calls)
+	}
+
+	// A second discard is idempotent.
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest("POST", fmt.Sprintf("/api/submissions/%d/discard", sub.ID), nil))
+	if rec2.Code != 200 {
+		t.Fatalf("second discard code=%d", rec2.Code)
+	}
+}
+
+// TestSubmitAndConfirmShareRateLimit proves both endpoints draw from one
+// per-IP budget: with RATE_LIMIT_PER_MIN=1 (burst 5, negligible refill),
+// five requests in any mix exhaust it and the sixth 429s on either endpoint.
+func TestSubmitAndConfirmShareRateLimit(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg := &config.Config{
+		RatePerMin: 1,
+		SheetTab:   "Leads",
+		Schema: config.Schema{
+			RequiredFields: []string{"contact", "need"},
+			Fields: []config.Field{
+				{Name: "name"}, {Name: "contact"}, {Name: "source"},
+				{Name: "need"}, {Name: "date"}, {Name: "notes"},
+			},
+			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
+		},
+	}
+	s := New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{})
+	h := handler(s)
+
+	rec, sub := postText(t, h, "Jane wants a logo, jane@x.com") // token 1
+	if rec.Code != 200 {
+		t.Fatalf("submit code=%d", rec.Code)
+	}
+	for i := 0; i < 4; i++ { // tokens 2-5; app-level statuses (200 then 409) are fine
+		if crec, _ := postConfirm(t, h, sub.ID, nil); crec.Code == 429 {
+			t.Fatalf("confirm %d hit the limit early", i)
+		}
+	}
+	if crec, _ := postConfirm(t, h, sub.ID, nil); crec.Code != 429 {
+		t.Fatalf("6th request (confirm) code=%d, want 429", crec.Code)
+	}
+	if srec, _ := postText(t, h, "another lead"); srec.Code != 429 {
+		t.Fatalf("7th request (submit) code=%d, want 429 from the shared budget", srec.Code)
+	}
+}
+
+func TestConfirmAfterDiscardRejected(t *testing.T) {
+	w := &fakeWriter{}
+	s := testServer(t, &fakeExtractor{result: goodResult()}, w)
+	h := handler(s)
+	_, sub := postText(t, h, "Jane wants a logo")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", fmt.Sprintf("/api/submissions/%d/discard", sub.ID), nil))
+	if rec.Code != 200 {
+		t.Fatalf("discard code=%d", rec.Code)
+	}
+	crec, _ := postConfirm(t, h, sub.ID, nil)
+	if crec.Code != 409 {
+		t.Fatalf("confirm after discard code=%d, want 409", crec.Code)
+	}
+	if len(w.rows) != 0 {
+		t.Fatal("discarded submission must never reach the sheet")
 	}
 }
 

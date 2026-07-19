@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EOEboh/sheetdrop/internal/extract"
-	"github.com/EOEboh/sheetdrop/internal/llm"
-	"github.com/EOEboh/sheetdrop/internal/store"
+	"github.com/EOEboh/ziga-data/internal/extract"
+	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/store"
 )
 
 const maxImageBytes = 5 << 20 // 5 MB

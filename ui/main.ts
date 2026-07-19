@@ -28,7 +28,13 @@ const state: {
   submission: Submission | null;
   localImageUrl: string | null;
   preview: PreviewResponse | null;
-} = { phase: "empty", submission: null, localImageUrl: null, preview: null };
+  // composing: the user opened the paste box via "New lead" while queued
+  // items still exist — queue-driven routing must not stomp the compose box.
+  composing: boolean;
+  // rerunOf: id of the submission being edited-and-re-run; discarded once the
+  // replacement submission is created.
+  rerunOf: number | null;
+} = { phase: "empty", submission: null, localImageUrl: null, preview: null, composing: false, rerunOf: null };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -37,17 +43,22 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function enterEmpty(): void {
   state.phase = "empty";
   state.submission = null;
+  state.composing = false;
   releaseLocalImage();
   show($("empty-state"));
   hide($("review-body"));
+  updateNewLeadButton();
   refreshPreviewStrip();
 }
 
 function enterReview(sub: Submission): void {
   state.phase = sub.status === "failed_write" ? "write_failed" : "reviewing";
   state.submission = sub;
+  state.composing = false;
   hide($("empty-state"));
   show($("review-body"));
+  show($("edit-rerun-button"));
+  updateNewLeadButton();
 
   renderLeft(sub.input.text ?? "", state.localImageUrl ?? sub.input.image_url ?? null, sub.created_at);
   if (sub.result) renderDetectedSource(sub.result.source);
@@ -59,6 +70,67 @@ function enterReview(sub: Submission): void {
   }
   setConfirmBusy(false);
   refreshPreviewStrip();
+}
+
+// startComposing shows the paste box on demand ("New lead") without touching
+// the queue — pending items stay behind the Review badge.
+function startComposing(): void {
+  state.composing = true;
+  state.phase = "empty";
+  state.submission = null;
+  state.rerunOf = null;
+  releaseLocalImage();
+  ($("lead-text") as HTMLTextAreaElement).value = "";
+  const fileInput = $("lead-image") as HTMLInputElement;
+  fileInput.value = "";
+  $("file-name").textContent = "";
+  if (location.hash === "#/history") location.hash = "#/";
+  show($("empty-state"));
+  hide($("review-body"));
+  submitError(null);
+  updateNewLeadButton();
+  refreshBadge();
+}
+
+// openQueue returns from the compose box (or history) to the review queue.
+// A plain hash link is not enough: clicking "#/" while already there fires
+// no hashchange.
+async function openQueue(): Promise<void> {
+  if (!state.composing && !$("review-body").hidden) return; // already on the queue
+  state.composing = false;
+  await advance();
+}
+
+// editRerun copies the original input back into the compose box; the next
+// successful submit creates a replacement and discards this submission.
+async function editRerun(): Promise<void> {
+  const sub = state.submission;
+  if (!sub) return;
+  startComposing();
+  state.rerunOf = sub.id;
+  ($("lead-text") as HTMLTextAreaElement).value = sub.input.text ?? "";
+  if (sub.input.image_url) {
+    try {
+      const resp = await fetch(sub.input.image_url);
+      if (!resp.ok) throw new Error(`image fetch: ${resp.status}`);
+      const blob = await resp.blob();
+      const file = new File([blob], "original." + (blob.type.split("/")[1] ?? "png"), { type: blob.type });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const fileInput = $("lead-image") as HTMLInputElement;
+      fileInput.files = dt.files;
+      $("file-name").textContent = file.name;
+    } catch {
+      submitError("Could not load the original image — re-attach it to include it");
+    }
+  }
+}
+
+// The "New lead" button shows whenever the paste box itself is not on screen.
+function updateNewLeadButton(): void {
+  const onReview = location.hash !== "#/history";
+  const pasteVisible = onReview && !$("empty-state").hidden;
+  $("new-lead-button").hidden = pasteVisible;
 }
 
 async function startExtraction(): Promise<void> {
@@ -78,9 +150,16 @@ async function startExtraction(): Promise<void> {
     state.localImageUrl = URL.createObjectURL(file);
   }
 
+  // Captured before the await: a mid-flight "New lead" click resets
+  // state.rerunOf, but this submission still replaces the original.
+  const rerunOf = state.rerunOf;
+
   state.phase = "extracting";
+  state.composing = false;
   hide($("empty-state"));
   show($("review-body"));
+  hide($("edit-rerun-button"));
+  updateNewLeadButton();
   renderLeft(text, state.localImageUrl, new Date().toISOString());
   renderSkeleton();
 
@@ -93,7 +172,25 @@ async function startExtraction(): Promise<void> {
     releaseLocalImage();
     show($("empty-state"));
     hide($("review-body"));
+    updateNewLeadButton();
     submitError(err instanceof ApiError ? err.message : "Extraction failed. Try again");
+    return;
+  }
+
+  // The re-run replaced the original: discard it, unless the server deduped
+  // us onto an existing submission (unchanged content returns the old row —
+  // discarding it would destroy the very submission we are now showing).
+  if (rerunOf !== null) {
+    state.rerunOf = null;
+    if (!sub.duplicate && sub.id !== rerunOf) {
+      await api.discard(rerunOf).catch(() => {});
+    }
+  }
+
+  // If the user hit "New lead" while this extraction was in flight, leave
+  // their fresh compose box alone — the result waits in the queue.
+  if (state.composing) {
+    refreshBadge();
     return;
   }
 
@@ -106,6 +203,7 @@ async function startExtraction(): Promise<void> {
     releaseLocalImage();
     show($("empty-state"));
     hide($("review-body"));
+    updateNewLeadButton();
     submitError("This content was already added today. No new row was created");
     return;
   }
@@ -307,6 +405,7 @@ function applyHash(): void {
       renderHistory({ items: [] });
     });
   }
+  updateNewLeadButton();
 }
 
 // ---- boot ------------------------------------------------------------------------
@@ -320,6 +419,9 @@ async function boot(): Promise<void> {
   $("confirm-button").addEventListener("click", confirm);
   $("retry-button").addEventListener("click", confirm);
   $("discard-button").addEventListener("click", discard);
+  $("new-lead-button").addEventListener("click", startComposing);
+  $("nav-review").addEventListener("click", openQueue);
+  $("edit-rerun-button").addEventListener("click", editRerun);
 
   const fileInput = $("lead-image") as HTMLInputElement;
   $("image-button").addEventListener("click", () => fileInput.click());

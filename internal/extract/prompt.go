@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EOEboh/sheetdrop/internal/config"
+	"github.com/EOEboh/ziga-data/internal/config"
 )
 
 // SystemPrompt renders the fixed system prompt. The submitted content is

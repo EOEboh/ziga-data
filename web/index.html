@@ -3,16 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>sheetdrop</title>
+  <title>Ziga Data</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">sheetdrop</div>
+    <div class="brand">Ziga Data</div>
     <nav class="views">
-      <a href="#/" data-view="review">Review</a>
-      <a href="#/history" data-view="history">History <span class="badge" id="queue-badge" hidden></span></a>
+      <a href="#/" data-view="review" id="nav-review">Review <span class="badge" id="queue-badge" hidden></span></a>
+      <a href="#/history" data-view="history">History</a>
     </nav>
+    <button type="button" class="btn" id="new-lead-button" hidden>New lead</button>
     <div class="spacer"></div>
     <div class="dropdown" id="destination">
       <button type="button" class="dropdown-toggle" id="destination-toggle" aria-haspopup="menu" aria-expanded="false">
@@ -44,6 +45,9 @@
             <div class="panel-label">Original input <span class="when" id="input-when"></span></div>
             <div class="raw-input" id="raw-input"></div>
             <div class="detected-source" id="detected-source" hidden></div>
+            <div class="rerun-row">
+              <button type="button" class="btn btn--ghost" id="edit-rerun-button" hidden>Edit and re-run</button>
+            </div>
           </div>
           <div class="card" id="panel-right">
             <div class="banner--amber" id="multi-lead-banner" hidden>Looks like more than one lead in this input. Showing the first. Review before confirming.</div>

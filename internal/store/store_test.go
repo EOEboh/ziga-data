@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func TestInputRoundTrip(t *testing.T) {
 	}
 }
 
-func TestGetUpdateDelete(t *testing.T) {
+func TestGetUpdateDiscard(t *testing.T) {
 	st := openTest(t)
 	ctx := context.Background()
 
@@ -99,17 +100,36 @@ func TestGetUpdateDelete(t *testing.T) {
 		t.Fatal("update of unknown id must error")
 	}
 
-	if err := st.Delete(ctx, sub.ID); err != nil {
+	if err := st.Discard(ctx, sub.ID); err != nil {
 		t.Fatal(err)
 	}
-	gone, err := st.Get(ctx, sub.ID)
-	if err != nil || gone != nil {
-		t.Fatalf("expected nil after delete, got %+v err=%v", gone, err)
+	// Soft delete: the row survives with a tombstoned hash.
+	kept, err := st.Get(ctx, sub.ID)
+	if err != nil || kept == nil {
+		t.Fatalf("row must survive discard, got %+v err=%v", kept, err)
 	}
-	// Deleting frees the hash for genuine resubmission.
+	if kept.Status != StatusDiscarded {
+		t.Fatalf("status = %s, want discarded", kept.Status)
+	}
+	wantHash := fmt.Sprintf("discarded:%d:a", sub.ID)
+	if kept.ContentHash != wantHash {
+		t.Fatalf("hash = %s, want %s", kept.ContentHash, wantHash)
+	}
+	if found, _ := st.FindByHash(ctx, "a"); found != nil {
+		t.Fatalf("original hash must be freed, found %+v", found)
+	}
+	// Discarding frees the hash for genuine resubmission.
 	dup, err := st.Insert(ctx, &Submission{ContentHash: "a", Status: StatusPending})
 	if err != nil || dup {
-		t.Fatalf("hash should be free after delete: dup=%v err=%v", dup, err)
+		t.Fatalf("hash should be free after discard: dup=%v err=%v", dup, err)
+	}
+	// A second discard is a no-op: no double tombstone.
+	if err := st.Discard(ctx, sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := st.Get(ctx, sub.ID)
+	if again.ContentHash != wantHash {
+		t.Fatalf("double discard rewrote the hash: %s", again.ContentHash)
 	}
 }
 
@@ -140,6 +160,104 @@ func TestListAndCountByStatuses(t *testing.T) {
 	written, err := st.ListByStatus(ctx, StatusWritten, 10)
 	if err != nil || len(written) != 1 {
 		t.Fatalf("written = %d err=%v", len(written), err)
+	}
+}
+
+func TestPurgeInputs(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	insert := func(hash string, status Status) *Submission {
+		t.Helper()
+		sub := &Submission{
+			ContentHash: hash, Status: status, Extraction: []byte(`{"need":"x"}`),
+			InputExcerpt: "excerpt", InputText: "full text", InputImage: []byte{1, 2}, InputImageType: "image/png",
+		}
+		if _, err := st.Insert(ctx, sub); err != nil {
+			t.Fatal(err)
+		}
+		return sub
+	}
+	oldWritten := insert("w-old", StatusWritten)
+	oldDiscarded := insert("d-old", StatusPending)
+	freshWritten := insert("w-new", StatusWritten)
+	pending := insert("p", StatusPending)
+
+	if err := st.Discard(ctx, oldDiscarded.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate the two "old" settled rows past the cutoff.
+	past := time.Now().UTC().Add(-30 * 24 * time.Hour).Format(time.RFC3339)
+	for _, id := range []int64{oldWritten.ID, oldDiscarded.ID} {
+		if _, err := st.db.Exec(`UPDATE submissions SET settled_at = ? WHERE id = ?`, past, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// freshWritten needs a settled_at too (Insert doesn't stamp it); keep it recent.
+	if _, err := st.db.Exec(`UPDATE submissions SET settled_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), freshWritten.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.PurgeInputs(ctx, time.Now().UTC().Add(-14*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("purged %d rows, want 2", n)
+	}
+
+	for _, id := range []int64{oldWritten.ID, oldDiscarded.ID} {
+		got, _ := st.Get(ctx, id)
+		if got.InputText != "" || len(got.InputImage) != 0 || got.InputImageType != "" {
+			t.Fatalf("row %d: originals not purged: %+v", id, got)
+		}
+		if got.InputExcerpt != "excerpt" || string(got.Extraction) != `{"need":"x"}` {
+			t.Fatalf("row %d: excerpt/extraction must survive the purge: %+v", id, got)
+		}
+	}
+	for _, id := range []int64{freshWritten.ID, pending.ID} {
+		got, _ := st.Get(ctx, id)
+		if got.InputText == "" || len(got.InputImage) == 0 {
+			t.Fatalf("row %d: must not be purged: %+v", id, got)
+		}
+	}
+
+	// Idempotent: nothing left to purge.
+	if n, _ := st.PurgeInputs(ctx, time.Now().UTC().Add(-14*24*time.Hour)); n != 0 {
+		t.Fatalf("second purge touched %d rows, want 0", n)
+	}
+}
+
+func TestSettledAtStamping(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	sub := &Submission{ContentHash: "s", Status: StatusPending}
+	st.Insert(ctx, sub)
+	if got, _ := st.Get(ctx, sub.ID); !got.SettledAt.IsZero() {
+		t.Fatalf("pending row must have no settled_at: %v", got.SettledAt)
+	}
+	if err := st.Update(ctx, sub.ID, StatusFailedWrite, nil, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Get(ctx, sub.ID); !got.SettledAt.IsZero() {
+		t.Fatalf("failed_write must not stamp settled_at: %v", got.SettledAt)
+	}
+	if err := st.Update(ctx, sub.ID, StatusWritten, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Get(ctx, sub.ID)
+	if got.SettledAt.IsZero() {
+		t.Fatal("written must stamp settled_at")
+	}
+	first := got.SettledAt
+	// A later update must not move the settled clock.
+	if err := st.Update(ctx, sub.ID, StatusWritten, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := st.Get(ctx, sub.ID); !again.SettledAt.Equal(first) {
+		t.Fatalf("settled_at moved: %v -> %v", first, again.SettledAt)
 	}
 }
 
@@ -187,6 +305,14 @@ func TestMigrateOldSchema(t *testing.T) {
 	written, _ := st.FindByHash(ctx, "old2")
 	if written.Status != StatusWritten {
 		t.Fatalf("written row must be untouched: %s", written.Status)
+	}
+	// Legacy settled rows get settled_at backfilled from created_at so the
+	// retention purge eventually reaches them; unsettled rows stay unset.
+	if written.SettledAt.IsZero() || !written.SettledAt.Equal(written.CreatedAt) {
+		t.Fatalf("settled_at not backfilled from created_at: %v vs %v", written.SettledAt, written.CreatedAt)
+	}
+	if !sub.SettledAt.IsZero() {
+		t.Fatalf("pending row must not get settled_at backfilled: %v", sub.SettledAt)
 	}
 	// New columns usable on the migrated table.
 	if _, err := st.Insert(ctx, &Submission{ContentHash: "new", Status: StatusPending, InputText: "t"}); err != nil {

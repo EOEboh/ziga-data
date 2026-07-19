@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EOEboh/sheetdrop/internal/extract"
-	"github.com/EOEboh/sheetdrop/internal/llm"
-	"github.com/EOEboh/sheetdrop/internal/store"
+	"github.com/EOEboh/ziga-data/internal/extract"
+	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/store"
 )
 
 type confirmRequest struct {
@@ -60,6 +60,10 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	if sub.Status == store.StatusWritten {
 		httpError(w, http.StatusConflict, "already written to the sheet")
+		return
+	}
+	if sub.Status == store.StatusDiscarded {
+		httpError(w, http.StatusConflict, "submission was discarded")
 		return
 	}
 
@@ -135,7 +139,12 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "already written to the sheet")
 		return
 	}
-	if err := s.store.Delete(ctx, id); err != nil {
+	if sub.Status == store.StatusDiscarded {
+		// Idempotent: a second discard (double click, second tab) is fine.
+		writeJSON(w, http.StatusOK, map[string]string{"status": "discarded"})
+		return
+	}
+	if err := s.store.Discard(ctx, id); err != nil {
 		s.log.Error("discard failed", "id", id, "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return

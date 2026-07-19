@@ -1,12 +1,12 @@
-# SheetDrop
+# Ziga Data
 
-Paste unstructured lead info — text, a forwarded email, or a screenshot — and SheetDrop extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
+Paste unstructured lead info — text, a forwarded email, or a screenshot — and Ziga Data extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
 
 - **Backend**: Go, no framework
 - **Frontend**: server-served static files; TypeScript compiled to one plain-JS bundle (`web/app.js`, committed), plain CSS with custom properties. No framework, no SPA.
 - **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Destination**: Google Sheets API with a service account — you share your sheet with the service account's email; no OAuth flow.
-- **Storage**: a single SQLite file for dedup keys, pending reviews, failed writes, and history.
+- **Storage**: a single SQLite file for dedup keys, pending reviews, failed writes, and history. Raw originals (full pasted text, uploaded images) are purged `RETENTION_DAYS` (default 14) after a submission is confirmed or discarded — extraction results and the short excerpt stay. The cleanup runs at boot and daily.
 
 ## How a submission flows
 
@@ -17,15 +17,19 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 5. `POST /api/submissions/{id}/confirm` writes the (possibly edited) row to your sheet (3 attempts, exponential backoff). A terminal failure keeps the submission as `failed_write` with the edited data intact; the Retry button is the same confirm call
 6. If multiple leads are detected in one submission, only the primary one is extracted and the review pane shows a banner
 
+**Dedup semantics.** The dedup key is the SHA-256 of the submitted content plus a UTC day bucket, so identical content is blocked for the rest of the day — except after a discard. Discarding is a *soft delete*: the row is kept with status `discarded` (its original input is later purged, see retention), but its dedup hash is rewritten to a per-row tombstone, so discarding a submission immediately frees its content for genuine resubmission the same day. Discarded submissions never appear in the queue or history and can no longer be confirmed.
+
 ## Local setup
 
 Requirements: Go 1.22+.
 
 ```sh
-git clone https://github.com/EOEboh/sheetdrop && cd sheetdrop
+git clone https://github.com/EOEboh/ziga-data && cd ziga-data
 cp .env.example .env   # fill in values
 go run ./cmd/server
 ```
+
+> The GitHub repository was renamed to `ziga-data`; clone URLs from before the rename redirect automatically. If you have a local database under the old default name, rename it to `ziga.db` or point `DB_PATH` at it.
 
 The server loads `.env` from the working directory automatically; variables already exported in your shell take precedence over the file.
 
@@ -55,19 +59,23 @@ Open http://localhost:8080/?mock=1 to drive the UI against built-in fixtures (al
 | `SHEET_TAB` | | `Leads` | Worksheet tab to append to |
 | `LLM_MODEL` | | `gpt-5.4-nano` | Any vision-capable OpenAI chat model |
 | `PORT` | | `8080` | HTTP port |
-| `DB_PATH` | | `./sheetdrop.db` | SQLite file |
+| `DB_PATH` | | `./ziga.db` | SQLite file |
 | `SCHEMA_PATH` | | `config/schema.json` | Extraction schema + column mapping |
 | `RATE_LIMIT_PER_MIN` | | `10` | Per-IP submissions per minute (burst 5) |
+| `RETENTION_DAYS` | | `14` | Days after confirm/discard before the raw original input (full text, image) is purged |
+| `HEADER_ROW` | | `1` | `1`/`true`: row 1 of the tab is a header, auto-written on first confirm if the tab is empty. `0`/`none`/`false`: no header row |
 
 ## Pointing it at a real Google Sheet
 
 1. In [Google Cloud Console](https://console.cloud.google.com), create (or pick) a project and **enable the Google Sheets API**.
 2. Create a **service account** (IAM & Admin → Service Accounts). No project roles are needed.
 3. Create a **JSON key** for it and save the file next to the binary; point `GOOGLE_APPLICATION_CREDENTIALS` at it.
-4. Create your sheet with a tab named `Leads` and this header row (must match `columns` in `config/schema.json`):
+4. Create your sheet with a tab named `Leads`. You can leave the tab completely empty — with the default `HEADER_ROW=1` the first confirm writes this header row (the `columns` from `config/schema.json`) automatically:
 
    | date | name | contact | source | need | notes | flags |
    |------|------|---------|--------|------|-------|-------|
+
+   If your tab has data but no header row, set `HEADER_ROW=none`.
 
 5. **Share the sheet** (editor access) with the service account's email (`...@<project>.iam.gserviceaccount.com`).
 6. Set `SHEET_ID` to the ID from the sheet URL and restart.
@@ -80,17 +88,25 @@ The service account only ever touches sheets explicitly shared with it — the a
 |---|---|
 | `POST /api/submit` | multipart form: `text` and/or `image`. Extract-only — stores a `pending` submission and returns `{id, status, result, field_states, flags, input, created_at}`. Writes nothing to the sheet |
 | `POST /api/submissions/{id}/confirm` | body `{"fields": {name: value, ...}}` with the reviewed values. The only path that appends a sheet row. Accepts `pending` and `failed_write` (retry = same call); `409` once written, `422` if a required field is still empty |
-| `POST /api/submissions/{id}/discard` | delete a pending/failed submission (frees the same-day dedup hash) |
+| `POST /api/submissions/{id}/discard` | soft-delete a pending/failed submission: row retained as `discarded`, same-day dedup hash freed. Idempotent; discarded items leave the queue and history |
 | `GET /api/submissions/{id}/image` | the original uploaded image |
 | `GET /api/queue` | pending + failed submissions, newest 100, with `count` for the badge |
-| `GET /api/preview` | last 3 data rows of the connected sheet (assumes row 1 is the header) |
+| `GET /api/preview` | last 3 data rows of the connected sheet (row 1 is treated as a header unless `HEADER_ROW=none`; empty sheets preview as empty) |
 | `GET /api/destination` | connected destination for the picker |
 | `GET /api/history` | last 50 written submissions |
 | `GET /healthz` | liveness |
 
-`status` is `pending` / `written` / `failed_write`. Only `/api/submit` is rate-limited (it is the only LLM-cost endpoint).
+`status` is `pending` / `written` / `failed_write` / `discarded`. `/api/submit` (LLM cost) and `/api/submissions/{id}/confirm` (Google Sheets quota) share one per-IP rate-limit budget (`RATE_LIMIT_PER_MIN`).
 
 Every request is logged as structured JSON (content hash — never raw content —, confidence, missing fields, status, duration).
+
+## Live smoke test
+
+```sh
+make smoke
+```
+
+Runs the full submit → confirm → preview flow against a running server (or starts one). It needs a real `OPENAI_API_KEY`; with `SHEET_ID` + `GOOGLE_APPLICATION_CREDENTIALS` set it appends a clearly marked test lead (`SMOKE TEST smoke-<timestamp> … Safe to delete.`) to your real sheet and verifies it comes back through `/api/preview` — delete the row afterwards. Without sheet config it exercises the dry-run destination. A timestamp nonce defeats the same-day dedup, so it can be re-run freely.
 
 ## Customizing the schema
 
@@ -107,34 +123,48 @@ Covers the per-field confidence matrix, date defaulting, JSON-schema shape, dedu
 ## Deploying to a VPS (Hetzner)
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o sheetdrop ./cmd/server
-scp sheetdrop config/schema.json service-account.json you@your-vps:/opt/sheetdrop/
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ziga ./cmd/server
+scp ziga config/schema.json service-account.json you@your-vps:/opt/ziga/
 ```
 
-`/etc/systemd/system/sheetdrop.service`:
+`/etc/systemd/system/ziga.service`:
 
 ```ini
 [Unit]
-Description=SheetDrop
+Description=Ziga Data
 After=network.target
 
 [Service]
-WorkingDirectory=/opt/sheetdrop
-ExecStart=/opt/sheetdrop/sheetdrop
+WorkingDirectory=/opt/ziga
+ExecStart=/opt/ziga/ziga
 Environment=OPENAI_API_KEY=sk-...
-Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/sheetdrop/service-account.json
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/ziga/service-account.json
 Environment=SHEET_ID=...
-Environment=SCHEMA_PATH=/opt/sheetdrop/schema.json
-Environment=DB_PATH=/opt/sheetdrop/sheetdrop.db
+Environment=SCHEMA_PATH=/opt/ziga/schema.json
+Environment=DB_PATH=/opt/ziga/ziga.db
 Restart=on-failure
-User=sheetdrop
+User=ziga
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```sh
-sudo systemctl enable --now sheetdrop
+sudo systemctl enable --now ziga
 ```
 
 Put it behind your existing nginx/caddy with TLS; the rate limiter reads `X-Forwarded-For`, so forwarding that header from the proxy is enough.
+
+**Backups.** Back up the SQLite file at `DB_PATH` (default `./ziga.db`; the resolved absolute path is logged at boot as `sqlite store open`) — it holds the dedup keys, the review queue, and history. The Google Sheet only holds confirmed rows, so it is not a substitute for backing up the database.
+
+## TODO
+
+Deliberately out of scope for now:
+
+- Queue navigation (prev/next between queued items; today the review pane auto-advances FIFO)
+- Multi-lead extraction (splitting one paste into several rows; today only the primary lead is extracted and a banner is shown)
+- History depth (pagination/search beyond the last 50 written submissions)
+
+## Changelog
+
+- 2026-07 — renamed to **Ziga Data** (formerly sheetdrop)

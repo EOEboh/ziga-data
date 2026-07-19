@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -40,8 +41,12 @@ type Config struct {
 	Port            string
 	DBPath          string
 	RatePerMin      int
-	SchemaPath      string
-	Schema          Schema
+	RetentionDays   int
+	// HeaderRow: row 1 of the sheet tab is a header (written automatically
+	// on first confirm if the tab is empty). False = the tab has no header.
+	HeaderRow  bool
+	SchemaPath string
+	Schema     Schema
 }
 
 func envOr(key, def string) string {
@@ -67,9 +72,10 @@ func Load() (*Config, error) {
 		SheetID:         os.Getenv("SHEET_ID"),
 		SheetTab:        envOr("SHEET_TAB", "Leads"),
 		Port:            envOr("PORT", "8080"),
-		DBPath:          envOr("DB_PATH", "./sheetdrop.db"),
+		DBPath:          envOr("DB_PATH", "./ziga.db"),
 		SchemaPath:      envOr("SCHEMA_PATH", "config/schema.json"),
 		RatePerMin:      10,
+		RetentionDays:   14,
 	}
 	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -77,6 +83,21 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid RATE_LIMIT_PER_MIN %q", v)
 		}
 		cfg.RatePerMin = n
+	}
+	if v := os.Getenv("RETENTION_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid RETENTION_DAYS %q", v)
+		}
+		cfg.RetentionDays = n
+	}
+	switch v := strings.ToLower(os.Getenv("HEADER_ROW")); v {
+	case "", "1", "true":
+		cfg.HeaderRow = true
+	case "0", "none", "false":
+		cfg.HeaderRow = false
+	default:
+		return nil, fmt.Errorf("invalid HEADER_ROW %q (want 1/true or 0/none/false)", v)
 	}
 
 	raw, err := os.ReadFile(cfg.SchemaPath)
