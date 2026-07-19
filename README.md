@@ -24,12 +24,12 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 Requirements: Go 1.22+.
 
 ```sh
-git clone https://github.com/EOEboh/ziga && cd ziga
+git clone https://github.com/EOEboh/ziga-data && cd ziga-data
 cp .env.example .env   # fill in values
 go run ./cmd/server
 ```
 
-> The GitHub repository rename to `ziga` is done manually outside this codebase; until it lands, clone from the old URL (GitHub redirects after a rename). If you have a local database under the old default name, rename it to `ziga.db` or point `DB_PATH` at it.
+> The GitHub repository was renamed to `ziga-data`; clone URLs from before the rename redirect automatically. If you have a local database under the old default name, rename it to `ziga.db` or point `DB_PATH` at it.
 
 The server loads `.env` from the working directory automatically; variables already exported in your shell take precedence over the file.
 
