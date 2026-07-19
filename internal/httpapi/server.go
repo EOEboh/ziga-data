@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/EOEboh/ziga/internal/config"
-	"github.com/EOEboh/ziga/internal/llm"
-	"github.com/EOEboh/ziga/internal/store"
+	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/store"
 )
 
 // RowWriter appends rows to the destination sheet and reads the tail back

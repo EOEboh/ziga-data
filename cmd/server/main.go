@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	ziga "github.com/EOEboh/ziga"
-	"github.com/EOEboh/ziga/internal/config"
-	"github.com/EOEboh/ziga/internal/extract"
-	"github.com/EOEboh/ziga/internal/httpapi"
-	"github.com/EOEboh/ziga/internal/llm"
-	"github.com/EOEboh/ziga/internal/sheets"
-	"github.com/EOEboh/ziga/internal/store"
+	ziga "github.com/EOEboh/ziga-data"
+	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/extract"
+	"github.com/EOEboh/ziga-data/internal/httpapi"
+	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/sheets"
+	"github.com/EOEboh/ziga-data/internal/store"
 )
 
 // dryRunWriter stands in for Google Sheets when SHEET_ID or credentials are

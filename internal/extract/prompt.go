@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EOEboh/ziga/internal/config"
+	"github.com/EOEboh/ziga-data/internal/config"
 )
 
 // SystemPrompt renders the fixed system prompt. The submitted content is

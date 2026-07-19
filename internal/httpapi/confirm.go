@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EOEboh/ziga/internal/extract"
-	"github.com/EOEboh/ziga/internal/llm"
-	"github.com/EOEboh/ziga/internal/store"
+	"github.com/EOEboh/ziga-data/internal/extract"
+	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/store"
 )
 
 type confirmRequest struct {
