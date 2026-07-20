@@ -146,7 +146,7 @@ func main() {
 		writer = &dryRunWriter{log: log, header: header}
 	}
 
-	static, err := fs.Sub(ziga.WebFS, "web")
+	static, err := fs.Sub(ziga.WebFS, "web/dist")
 	if err != nil {
 		log.Error("embed", "err", err)
 		os.Exit(1)

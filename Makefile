@@ -1,14 +1,15 @@
-# web/app.js is a committed build artifact: //go:embed web needs it present,
-# so `go build` works without Node. Rebuild it after touching ui/*.ts.
-.PHONY: ui ui-check build test run smoke
+# web/dist is a committed build artifact: //go:embed all:web/dist needs it
+# present, so `go build` works without Node. Rebuild it (make ui-build) after
+# touching web/src and commit the result.
+.PHONY: ui-build ui-check build test run smoke
 
-ui:
-	npx esbuild ui/main.ts --bundle --format=iife --target=es2020 --outfile=web/app.js
+ui-build:
+	npm --prefix web run build
 
 ui-check:
-	npx tsc --noEmit -p ui
+	npx tsc --noEmit -p web
 
-build: ui
+build: ui-build
 	go build ./...
 
 test:
