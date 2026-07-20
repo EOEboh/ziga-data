@@ -1,25 +1,3 @@
-// Tiny DOM helpers. All extraction-derived content is set via textContent —
-// never innerHTML — because pasted lead text is attacker-influenced.
-
-export function $(id: string): HTMLElement {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`missing element #${id}`);
-  return el;
-}
-
-export function clone(tplId: string): HTMLElement {
-  const tpl = $(tplId) as HTMLTemplateElement;
-  return tpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
-}
-
-export function show(el: HTMLElement): void {
-  el.hidden = false;
-}
-
-export function hide(el: HTMLElement): void {
-  el.hidden = true;
-}
-
 // relativeTime renders "pasted just now" style timestamps.
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();

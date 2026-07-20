@@ -3,5 +3,5 @@ package ziga
 
 import "embed"
 
-//go:embed web
+//go:embed all:web/dist
 var WebFS embed.FS

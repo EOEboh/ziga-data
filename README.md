@@ -3,7 +3,7 @@
 Paste unstructured lead info — text, a forwarded email, or a screenshot — and Ziga Data extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
 
 - **Backend**: Go, no framework
-- **Frontend**: server-served static files; TypeScript compiled to one plain-JS bundle (`web/app.js`, committed), plain CSS with custom properties. No framework, no SPA.
+- **Frontend**: React 18 + TypeScript built with Vite (`web/`), styled with Tailwind CSS on the same design tokens as before. The production build (`web/dist`, committed) is embedded into the binary via `go:embed` — no Node needed to build or run the server. No router or state library; hash views (`#/`, `#/history`) and a `useReducer` state machine.
 - **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Destination**: Google Sheets API with a service account — you share your sheet with the service account's email; no OAuth flow.
 - **Storage**: a single SQLite file for dedup keys, pending reviews, failed writes, and history. Raw originals (full pasted text, uploaded images) are purged `RETENTION_DAYS` (default 14) after a submission is confirmed or discarded — extraction results and the short excerpt stay. The cleanup runs at boot and daily.
@@ -39,15 +39,16 @@ Without `SHEET_ID` / `GOOGLE_APPLICATION_CREDENTIALS` the server runs in **dry-r
 
 ### Frontend development
 
-The UI sources live in `ui/*.ts` and compile to the committed `web/app.js` (embedded into the binary via `go:embed`, so `go build` needs no Node):
+The UI is a Vite + React project in `web/` (sources in `web/src`). The production build output `web/dist` is committed and embedded into the binary via `go:embed`, so `go build` needs no Node — Node is only needed when changing frontend code:
 
 ```sh
-npm install     # once: esbuild + typescript
-make ui-check   # type-check
-make ui         # rebuild web/app.js — commit the result
+npm --prefix web install   # once: react, vite, tailwind, typescript
+npm --prefix web run dev   # dev server on :5173, proxies /api to :8080
+make ui-check              # type-check (tsc strict)
+make ui-build              # rebuild web/dist — commit the result
 ```
 
-Open http://localhost:8080/?mock=1 to drive the UI against built-in fixtures (all confidence states, a failing confirm) with no backend calls.
+Open http://localhost:5173/?mock=1 (or :8080/?mock=1 against the embedded build) to drive the UI against built-in fixtures (all confidence states, a failing confirm) with no backend calls.
 
 ### Environment variables
 
