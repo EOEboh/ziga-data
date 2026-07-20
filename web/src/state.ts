@@ -85,6 +85,7 @@ export type Action =
   | { type: "SET_COMPOSE_FILE"; file: File | null }
   | { type: "SUBMIT_ERROR"; message: string | null }
   | { type: "START_COMPOSING" }
+  | { type: "COMPOSING_ENDED" }
   | { type: "RERUN_STARTED"; id: number; text: string }
   | { type: "RERUN_CLEARED" }
   | { type: "EXTRACTION_STARTED"; text: string; localImageUrl: string | null; startedAt: string }
@@ -135,6 +136,11 @@ export function reducer(state: AppState, action: Action): AppState {
         localImageUrl: null,
         submitError: null,
       };
+
+    // Returning to the queue ends composing immediately, before the queue
+    // fetch resolves — an extraction landing mid-fetch must see it ended.
+    case "COMPOSING_ENDED":
+      return { ...state, composing: false };
 
     case "RERUN_STARTED":
       return { ...state, rerunOf: action.id, composeText: action.text };
