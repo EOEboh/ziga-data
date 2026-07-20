@@ -1,0 +1,54 @@
+/* Ziga Data visual system — light theme v1, expressed as Tailwind theme
+   tokens. Values are carried over unchanged from the pre-React stylesheet.
+   Semantic amber/red are reserved for extraction confidence states and must
+   never be used decoratively. */
+
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #FAFAF8;
+  --color-surface: #FFFFFF;
+  --color-text: #1A1A18;
+  --color-text-2: #6B6B66;
+  --color-line: #E4E4DF;
+
+  --color-green: #1D9E75;
+  --color-green-deep: #0F6E56;
+  --color-green-tint: #E1F5EE;
+
+  --color-amber-text: #854F0B;
+  --color-amber-tint: #FAEEDA;
+  --color-amber: #EF9F27;
+
+  --color-red-text: #A32D2D;
+  --color-red-tint: #FCEBEB;
+  --color-red: #E24B4A;
+
+  --radius-ctl: 8px;
+  --radius-card: 12px;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+
+  --shadow-popover: 0 4px 16px rgba(26, 26, 24, 0.10);
+
+  /* Skeleton pulse: same timing as the pre-React keyframes. */
+  --animate-pulse-skel: pulse-skel 1.4s ease-in-out infinite;
+
+  @keyframes pulse-skel {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+}
