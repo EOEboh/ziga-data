@@ -14,7 +14,7 @@ const previewRows = 3
 // newest first. Drives the top-bar badge and restores in-progress reviews
 // after a reload.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.store.ListByStatuses(r.Context(),
+	subs, err := s.store.ListByStatuses(r.Context(), userID(r),
 		[]store.Status{store.StatusPending, store.StatusFailedWrite}, 100)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
@@ -31,7 +31,13 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 // strip. Sheet errors degrade to an empty strip rather than failing the page.
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	cols := s.cfg.Schema.Columns
-	rows, err := s.writer.LastRows(r.Context(), previewRows)
+	writer, err := s.writerFor(r.Context(), userID(r))
+	if err != nil {
+		// No sheet / needs reconnect: an empty preview, not a page error.
+		writeJSON(w, http.StatusOK, map[string]any{"columns": cols, "rows": [][]string{}})
+		return
+	}
+	rows, err := writer.LastRows(r.Context(), previewRows)
 	if err != nil {
 		s.log.Error("preview read failed", "err", err)
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -55,21 +61,40 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 type dryRunner interface{ DryRun() bool }
 
 func (s *Server) handleDestination(w http.ResponseWriter, r *http.Request) {
-	label := s.cfg.SheetTab + " (Google Sheet)"
-	dry := false
-	if d, ok := s.writer.(dryRunner); ok && d.DryRun() {
-		dry = true
+	uid := userID(r)
+	active := map[string]any{"id": "sheet", "type": "google_sheet", "active": true}
+
+	if !s.googleEnabled() {
+		// Dev / dry-run: the in-memory sheet.
+		dry := false
+		if d, ok := s.writer.(dryRunner); ok && d.DryRun() {
+			dry = true
+		}
+		active["label"] = s.cfg.SheetTab + " (Google Sheet)"
+		active["dry_run"] = dry
+	} else if sheet, err := s.store.GetUserSheet(r.Context(), uid); err == nil {
+		active["label"] = sheet.SheetTab + " (Google Sheet)"
+		active["spreadsheet_id"] = sheet.SpreadsheetID
+		active["created_by_app"] = sheet.CreatedByApp
+		active["needs_reconnect"] = sheet.Broken() || !s.googleConnected(r, uid)
+		active["connected"] = !sheet.Broken() && s.googleConnected(r, uid)
+	} else {
+		// Authenticated but no destination yet (onboarding not finished).
+		active["label"] = "No sheet connected"
+		active["connected"] = false
+		active["needs_setup"] = true
 	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"destinations": []map[string]any{
-			{"id": "sheet", "label": label, "type": "google_sheet", "active": true, "dry_run": dry},
+			active,
 			{"id": "notion", "label": "Notion", "type": "notion", "disabled": true, "coming_soon": true},
 		},
 	})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.store.ListByStatus(r.Context(), store.StatusWritten, 50)
+	subs, err := s.store.ListByStatus(r.Context(), userID(r), store.StatusWritten, 50)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return

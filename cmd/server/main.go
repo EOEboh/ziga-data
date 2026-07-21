@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -17,6 +19,9 @@ import (
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/httpapi"
 	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/oauth"
+	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/sheets"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
@@ -82,6 +87,18 @@ func main() {
 		log.Error("OPENAI_API_KEY is required")
 		os.Exit(1)
 	}
+	// SESSION_SECRET keys CSRF token signatures. Without it, generate an
+	// ephemeral secret so the app still runs locally — but sessions and CSRF
+	// tokens won't survive a restart, so it must be set in production.
+	if cfg.SessionSecret == "" {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			log.Error("generate session secret", "err", err)
+			os.Exit(1)
+		}
+		cfg.SessionSecret = base64.StdEncoding.EncodeToString(buf)
+		log.Warn("SESSION_SECRET not set — generated an ephemeral one; sessions and CSRF tokens will not survive a restart")
+	}
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -146,13 +163,38 @@ func main() {
 		writer = &dryRunWriter{log: log, header: header}
 	}
 
+	// Mailer for verification / password-reset links. Without SMTP configured,
+	// the dev mailer logs links instead of sending them.
+	var mailer mail.Mailer
+	if cfg.SMTPHost != "" {
+		mailer = mail.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom)
+	} else {
+		log.Warn("SMTP_HOST not set — verification and reset emails will be logged, not sent")
+		mailer = mail.NewLogMailer(log)
+	}
+
+	// Google OAuth (identity + drive.file) and token encryption. When OAuth is
+	// unconfigured (dev) the box stays nil and the OAuth routes report 404.
+	oauthCfg := oauth.NewConfig(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.OAuthRedirectURL)
+	var box *secretbox.Box
+	if cfg.TokenEncryptionKey != "" {
+		box, err = secretbox.New(cfg.TokenEncryptionKey)
+		if err != nil {
+			log.Error("token encryption key", "err", err)
+			os.Exit(1)
+		}
+	}
+	if oauthCfg.Configured() {
+		log.Info("google oauth enabled", "scopes", oauthCfg.Scopes())
+	}
+
 	static, err := fs.Sub(ziga.WebFS, "web/dist")
 	if err != nil {
 		log.Error("embed", "err", err)
 		os.Exit(1)
 	}
 
-	srv := httpapi.New(cfg, log, extractor, st, writer)
+	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, box)
 	addr := ":" + cfg.Port
 	log.Info("listening", "addr", addr, "model", cfg.LLMModel, "schema", cfg.Schema.Name)
 	if err := http.ListenAndServe(addr, srv.Handler(static)); err != nil {

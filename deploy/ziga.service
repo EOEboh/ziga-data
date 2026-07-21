@@ -1,0 +1,55 @@
+# ziga.service — systemd unit for the ziga-data single-binary service.
+#
+# WHAT:  Runs /opt/ziga/ziga as the dedicated, unprivileged `ziga` system user,
+#        with production resource caps and filesystem hardening.
+# WHERE: Install to /etc/systemd/system/ziga.service on the server, then:
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now ziga
+#        See deploy/RUNBOOK.md §b for the full first-deploy sequence.
+
+[Unit]
+Description=ziga-data (lead capture + extraction service)
+Documentation=https://github.com/EOEboh/ziga-data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ziga
+Group=ziga
+WorkingDirectory=/opt/ziga
+
+# All configuration is env-driven (see deploy/RUNBOOK.md §a for the template).
+# Note: the binary also reads config/schema.json from disk relative to
+# WorkingDirectory, so /opt/ziga/config/schema.json must exist.
+EnvironmentFile=/opt/ziga/ziga.env
+ExecStart=/opt/ziga/ziga
+
+Restart=on-failure
+RestartSec=3
+
+# Resource caps for a CPX22 shared with other services.
+MemoryMax=512M
+CPUQuota=100%
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# ProtectSystem=strict makes the whole filesystem read-only except this path.
+# The app only writes inside /opt/ziga: the SQLite database (ziga.db) and, while
+# a write transaction is in flight, its rollback journal (ziga.db-journal).
+# WAL is NOT enabled in the app (single-connection pool), so there are no
+# ziga.db-wal / ziga.db-shm sidecars to account for. Everything else the app
+# touches under /opt/ziga (ziga.env, config/schema.json, the service-account
+# JSON) is read-only, which strict mode permits.
+ReadWritePaths=/opt/ziga
+
+# Logs go to stdout/stderr as JSON; journald captures and rotates them.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ziga
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,7 +49,8 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	defer s.confirmMu.Unlock()
 
 	ctx := r.Context()
-	sub, err := s.store.Get(ctx, id)
+	uid := userID(r)
+	sub, err := s.store.Get(ctx, uid, id)
 	if err != nil {
 		s.log.Error("confirm lookup failed", "id", id, "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
@@ -99,9 +101,23 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(sub.Flags, &flags)
 	}
 
-	if err := s.writer.Append(ctx, s.buildRow(&res, flags)); err != nil {
+	writer, err := s.writerFor(ctx, uid)
+	if err != nil {
+		switch {
+		case errors.Is(err, errNoSheet):
+			httpError(w, http.StatusConflict, "Connect a destination sheet before confirming")
+		case errors.Is(err, errReconnect):
+			httpError(w, http.StatusConflict, "Reconnect your Google account to write to your sheet")
+		default:
+			s.log.Error("resolve writer", "id", id, "err", err)
+			httpError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+
+	if err := writer.Append(ctx, s.buildRow(&res, flags)); err != nil {
 		s.log.Error("sheet write failed", "id", id, "err", err)
-		if uerr := s.store.Update(ctx, id, store.StatusFailedWrite, mergedJSON, err.Error()); uerr != nil {
+		if uerr := s.store.Update(ctx, uid, id, store.StatusFailedWrite, mergedJSON, err.Error()); uerr != nil {
 			s.log.Error("store update failed", "id", id, "err", uerr)
 		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{
@@ -111,7 +127,7 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := s.store.Update(ctx, id, store.StatusWritten, mergedJSON, ""); err != nil {
+	if err := s.store.Update(ctx, uid, id, store.StatusWritten, mergedJSON, ""); err != nil {
 		// The row is on the sheet; only local bookkeeping failed. Surface
 		// success — a retry here would duplicate the sheet row.
 		s.log.Error("store update failed after sheet write", "id", id, "err", err)
@@ -126,7 +142,8 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	sub, err := s.store.Get(ctx, id)
+	uid := userID(r)
+	sub, err := s.store.Get(ctx, uid, id)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -144,7 +161,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "discarded"})
 		return
 	}
-	if err := s.store.Discard(ctx, id); err != nil {
+	if err := s.store.Discard(ctx, uid, id); err != nil {
 		s.log.Error("discard failed", "id", id, "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -160,7 +177,7 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sub, err := s.store.Get(r.Context(), id)
+	sub, err := s.store.Get(r.Context(), userID(r), id)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return

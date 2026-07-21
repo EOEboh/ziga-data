@@ -4,22 +4,21 @@
 // user has since moved past (most importantly the composing guard).
 
 import { useEffect, useReducer, useRef } from "react";
-import { ApiError, createApi } from "./api";
+import { ApiError, api } from "./api";
+import { AccountMenu } from "./components/AccountMenu";
 import { ComposeBox } from "./components/ComposeBox";
 import { HistoryView } from "./components/HistoryView";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { ReviewPane } from "./components/ReviewPane";
 import { TopBar } from "./components/TopBar";
 import { initialState, reducer } from "./state";
-import { Submission } from "./types";
-
-const api = createApi();
+import { Me, Submission } from "./types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const MAX_IMAGE_BYTES = 5 << 20; // mirrors the server-side limit
 
-export function App() {
+export function App({ me, reload }: { me: Me; reload: () => void }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -282,6 +281,7 @@ export function App() {
         newLeadVisible={newLeadVisible}
         onNewLead={startComposing}
         onOpenQueue={openQueue}
+        accountMenu={<AccountMenu api={api} me={me} reload={reload} />}
       />
       <main className="max-w-[1040px] mx-auto p-6">
         {state.route === "history" ? (

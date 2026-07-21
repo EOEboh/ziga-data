@@ -14,6 +14,7 @@ type ipLimiter struct {
 	mu       sync.Mutex
 	visitors map[string]*visitor
 	perMin   int
+	burst    int
 }
 
 type visitor struct {
@@ -21,8 +22,15 @@ type visitor struct {
 	lastSeen time.Time
 }
 
+// newIPLimiter builds a per-IP limiter with the default burst of 5.
 func newIPLimiter(perMin int) *ipLimiter {
-	l := &ipLimiter{visitors: map[string]*visitor{}, perMin: perMin}
+	return newIPLimiterBurst(perMin, 5)
+}
+
+// newIPLimiterBurst builds a per-IP limiter with an explicit burst — used by
+// the stricter auth limiters (login, password reset).
+func newIPLimiterBurst(perMin, burst int) *ipLimiter {
+	l := &ipLimiter{visitors: map[string]*visitor{}, perMin: perMin, burst: burst}
 	go l.cleanup()
 	return l
 }
@@ -32,7 +40,7 @@ func (l *ipLimiter) get(ip string) *rate.Limiter {
 	defer l.mu.Unlock()
 	v, ok := l.visitors[ip]
 	if !ok {
-		v = &visitor{limiter: rate.NewLimiter(rate.Limit(float64(l.perMin)/60.0), 5)}
+		v = &visitor{limiter: rate.NewLimiter(rate.Limit(float64(l.perMin)/60.0), l.burst)}
 		l.visitors[ip] = v
 	}
 	v.lastSeen = time.Now()

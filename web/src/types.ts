@@ -86,3 +86,31 @@ export function fieldValue(result: ExtractionResult | undefined, name: FieldName
   const v = result[name];
   return v ?? "";
 }
+
+// --- Auth / multi-tenant ---
+
+export interface User {
+  id: number;
+  email: string;
+  email_verified: boolean;
+}
+
+// Me is the bootstrap payload from GET /api/me: who the current user is, their
+// connection status, and the public config the frontend needs.
+export interface Me {
+  authenticated: boolean;
+  user: User | null;
+  google_connected?: boolean;
+  sheet_connected?: boolean;
+  config: {
+    google_oauth: boolean;
+    google_client_id: string;
+    google_picker_api_key: string;
+  };
+}
+
+export interface SheetConnection {
+  spreadsheet_id: string;
+  sheet_tab: string;
+  created_by_app: boolean;
+}

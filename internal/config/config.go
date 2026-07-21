@@ -47,6 +47,39 @@ type Config struct {
 	HeaderRow  bool
 	SchemaPath string
 	Schema     Schema
+
+	// Auth / multi-tenant configuration.
+	// SessionSecret keys the HMAC on CSRF tokens. If empty at boot an ephemeral
+	// one is generated (sessions/CSRF then don't survive a restart) — set it in
+	// production.
+	SessionSecret string
+	// AppBaseURL is the public origin, used to build email links and to decide
+	// whether cookies get the Secure attribute (https).
+	AppBaseURL string
+	// SMTP_* configure the outbound mailer. When SMTPHost is empty the app uses
+	// a dev mailer that logs verification/reset links instead of sending them.
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+
+	// Google OAuth (identity + drive.file). When ClientID/Secret are empty the
+	// app runs without Google sign-in or per-user Sheets (dev / dry-run).
+	GoogleOAuthClientID     string
+	GoogleOAuthClientSecret string
+	OAuthRedirectURL        string
+	// GooglePickerAPIKey is a browser API key served to the frontend for the
+	// Google Picker (attach-existing-sheet flow).
+	GooglePickerAPIKey string
+	// TokenEncryptionKey (base64, 32 bytes) encrypts OAuth tokens at rest.
+	// Required whenever Google OAuth is configured.
+	TokenEncryptionKey string
+}
+
+// OAuthConfigured reports whether Google OAuth credentials are present.
+func (c *Config) OAuthConfigured() bool {
+	return c.GoogleOAuthClientID != "" && c.GoogleOAuthClientSecret != ""
 }
 
 func envOr(key, def string) string {
@@ -76,6 +109,24 @@ func Load() (*Config, error) {
 		SchemaPath:      envOr("SCHEMA_PATH", "config/schema.json"),
 		RatePerMin:      10,
 		RetentionDays:   14,
+		SessionSecret:   os.Getenv("SESSION_SECRET"),
+		AppBaseURL:      envOr("APP_BASE_URL", "http://localhost:8080"),
+		SMTPHost:        os.Getenv("SMTP_HOST"),
+		SMTPPort:        envOr("SMTP_PORT", "587"),
+		SMTPUsername:    os.Getenv("SMTP_USERNAME"),
+		SMTPPassword:    os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:        envOr("SMTP_FROM", "ziga@localhost"),
+
+		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+		OAuthRedirectURL:        envOr("OAUTH_REDIRECT_URL", envOr("APP_BASE_URL", "http://localhost:8080")+"/api/auth/google/callback"),
+		GooglePickerAPIKey:      os.Getenv("GOOGLE_PICKER_API_KEY"),
+		TokenEncryptionKey:      os.Getenv("TOKEN_ENCRYPTION_KEY"),
+	}
+	// When Google OAuth is configured, the token-encryption key is mandatory —
+	// we must never store OAuth tokens in plaintext.
+	if cfg.OAuthConfigured() && cfg.TokenEncryptionKey == "" {
+		return nil, fmt.Errorf("TOKEN_ENCRYPTION_KEY is required when Google OAuth is configured")
 	}
 	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)

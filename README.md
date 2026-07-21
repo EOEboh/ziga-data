@@ -121,42 +121,34 @@ go test ./...
 
 Covers the per-field confidence matrix, date defaulting, JSON-schema shape, dedup/store behavior including the legacy-database migration, and the confirm/retry/discard handler paths. For a live end-to-end check, run the server and try: a normal lead, one containing "ignore previous instructions…", a two-lead message, and a non-English lead.
 
-## Deploying to a VPS (Hetzner)
+## Deployment
 
-```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ziga ./cmd/server
-scp ziga config/schema.json service-account.json you@your-vps:/opt/ziga/
-```
+Production deployment to the Hetzner box is fully versioned under [`deploy/`](deploy/)
+and driven by a copy-paste runbook — **[deploy/RUNBOOK.md](deploy/RUNBOOK.md)**.
 
-`/etc/systemd/system/ziga.service`:
+The `deploy/` directory contains:
 
-```ini
-[Unit]
-Description=Ziga Data
-After=network.target
+- **`ziga.service`** — hardened systemd unit (dedicated `ziga` user, resource
+  caps, `ProtectSystem=strict`).
+- **`nginx-ziga.conf`** — TLS-terminating reverse-proxy server block with an
+  `/api/` rate limit and a 6 MB body ceiling (above the app's 5 MB image limit).
+- **`backup-ziga.sh`** + **`backup-ziga.cron`** — nightly WAL/journal-safe SQLite
+  backup to R2 via rclone, with a 30-day retention prune and a `BACKUP_DRY_RUN`
+  mode. The runbook's backup step includes a **mandatory restore test**.
 
-[Service]
-WorkingDirectory=/opt/ziga
-ExecStart=/opt/ziga/ziga
-Environment=OPENAI_API_KEY=sk-...
-Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/ziga/service-account.json
-Environment=SHEET_ID=...
-Environment=SCHEMA_PATH=/opt/ziga/schema.json
-Environment=DB_PATH=/opt/ziga/ziga.db
-Restart=on-failure
-User=ziga
+Pushes to `main` build and deploy automatically via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (atomic binary
+swap, health-check, and automatic rollback on failure). The runbook covers the
+one-time server setup, the Cloudflare origin cert, the restricted CI deploy user,
+and the required GitHub secrets.
 
-[Install]
-WantedBy=multi-user.target
-```
+**Backups.** The SQLite file at `DB_PATH` is the only persistent state — it holds
+the dedup keys, the review queue, and history. The Google Sheet only holds
+confirmed rows, so it is not a substitute for backing up the database. See the
+runbook's backup + restore-test section.
 
-```sh
-sudo systemctl enable --now ziga
-```
-
-Put it behind your existing nginx/caddy with TLS; the rate limiter reads `X-Forwarded-For`, so forwarding that header from the proxy is enough.
-
-**Backups.** Back up the SQLite file at `DB_PATH` (default `./ziga.db`; the resolved absolute path is logged at boot as `sqlite store open`) — it holds the dedup keys, the review queue, and history. The Google Sheet only holds confirmed rows, so it is not a substitute for backing up the database.
+> **Staging note:** the current pass is staging-only — DNS for `zigadata.com` is
+> not flipped and access is via an SSH tunnel until auth lands. See RUNBOOK §h.
 
 ## TODO
 
@@ -165,6 +157,15 @@ Deliberately out of scope for now:
 - Queue navigation (prev/next between queued items; today the review pane auto-advances FIFO)
 - Multi-lead extraction (splitting one paste into several rows; today only the primary lead is extracted and a banner is shown)
 - History depth (pagination/search beyond the last 50 written submissions)
+
+Deferred from the multi-tenant auth pass:
+
+- **Billing / subscriptions** — no plans or payment yet; every account is free.
+- **Team accounts** — one user = one tenant; no shared workspaces or member roles.
+- **Marketing site** — the app is the only surface; `zigadata.com` marketing pages are separate.
+- **Google app-verification submission** — the code targets the `drive.file`
+  scope (not the broad `spreadsheets` scope) so verification stays light; the
+  formal submission happens before a public launch.
 
 ## Changelog
 

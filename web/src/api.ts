@@ -4,8 +4,10 @@ import {
   DestinationResponse,
   FieldState,
   HistoryResponse,
+  Me,
   PreviewResponse,
   QueueResponse,
+  SheetConnection,
   Submission,
 } from "./types";
 
@@ -30,9 +32,34 @@ export interface Api {
   preview(): Promise<PreviewResponse>;
   destinations(): Promise<DestinationResponse>;
   history(): Promise<HistoryResponse>;
+
+  // Auth / onboarding.
+  me(): Promise<Me>;
+  signup(email: string, password: string): Promise<void>;
+  login(email: string, password: string): Promise<void>;
+  logout(): Promise<void>;
+  forgotPassword(email: string): Promise<void>;
+  resetPassword(token: string, password: string): Promise<void>;
+  disconnectGoogle(): Promise<void>;
+  createSheet(): Promise<SheetConnection>;
+  attachSheet(spreadsheetId: string): Promise<SheetConnection>;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+// readCookie returns a document cookie value by name, or "".
+function readCookie(name: string): string {
+  const m = document.cookie.match("(?:^|; )" + name + "=([^;]*)");
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+const UNSAFE = /^(POST|PUT|PATCH|DELETE)$/i;
+
+async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+  // Same-origin cookies carry the session; unsafe methods must echo the CSRF
+  // cookie in a header (signed double-submit — see internal/httpapi/middleware).
+  init.credentials = "same-origin";
+  if (UNSAFE.test(init.method ?? "GET")) {
+    init.headers = { ...(init.headers ?? {}), "X-CSRF-Token": readCookie("ziga_csrf") };
+  }
   let res: Response;
   try {
     res = await fetch(url, init);
@@ -81,8 +108,52 @@ class HttpApi implements Api {
   history(): Promise<HistoryResponse> {
     return request<HistoryResponse>("/api/history");
   }
+
+  me(): Promise<Me> {
+    return request<Me>("/api/me");
+  }
+  async signup(email: string, password: string): Promise<void> {
+    await postJSON("/api/auth/signup", { email, password });
+  }
+  async login(email: string, password: string): Promise<void> {
+    await postJSON("/api/auth/login", { email, password });
+  }
+  async logout(): Promise<void> {
+    await postJSON("/api/auth/logout", {});
+  }
+  async forgotPassword(email: string): Promise<void> {
+    await postJSON("/api/auth/password/forgot", { email });
+  }
+  async resetPassword(token: string, password: string): Promise<void> {
+    await postJSON("/api/auth/password/reset", { token, password });
+  }
+  async disconnectGoogle(): Promise<void> {
+    await postJSON("/api/auth/google/disconnect", {});
+  }
+  createSheet(): Promise<SheetConnection> {
+    return postJSON<SheetConnection>("/api/sheets/create", {});
+  }
+  attachSheet(spreadsheetId: string): Promise<SheetConnection> {
+    return postJSON<SheetConnection>("/api/sheets/attach", { spreadsheet_id: spreadsheetId });
+  }
 }
+
+function postJSON<T = unknown>(url: string, body: unknown): Promise<T> {
+  return request<T>(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// googleStartURL is the top-level navigation that begins Google OAuth (not a
+// fetch — the browser is redirected to Google and back).
+export const googleStartURL = "/api/auth/google/start";
 
 export function createApi(): Api {
   return new URLSearchParams(location.search).has("mock") ? new MockApi() : new HttpApi();
 }
+
+// api is the single shared client instance used across the app (so ?mock=1
+// keeps one consistent in-memory state).
+export const api = createApi();
