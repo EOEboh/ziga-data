@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Api } from "../api";
 import { Destination } from "../types";
 import { Button } from "./Button";
 
-// Brand, Review/History nav with the queue badge, the New lead button, and
-// the destination dropdown (incl. the disabled "Notion — coming soon" item).
+// Brand, Review/History nav with the queue badge, the New lead button, the
+// destination dropdown (incl. the disabled "Notion — coming soon" item), and
+// the account menu.
 export function TopBar({
   api,
   route,
@@ -12,6 +13,7 @@ export function TopBar({
   newLeadVisible,
   onNewLead,
   onOpenQueue,
+  accountMenu,
 }: {
   api: Api;
   route: "review" | "history";
@@ -19,6 +21,7 @@ export function TopBar({
   newLeadVisible: boolean;
   onNewLead: () => void;
   onOpenQueue: () => void;
+  accountMenu?: ReactNode;
 }) {
   const navLink = (active: boolean) =>
     `no-underline px-3 py-1 rounded-ctl inline-flex items-center gap-1.5 ${
@@ -44,6 +47,7 @@ export function TopBar({
       {newLeadVisible && <Button onClick={onNewLead}>New lead</Button>}
       <div className="flex-1" />
       <DestinationDropdown api={api} />
+      {accountMenu}
     </header>
   );
 }

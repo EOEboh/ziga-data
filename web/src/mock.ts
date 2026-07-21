@@ -7,8 +7,10 @@ import {
   ConfirmResponse,
   DestinationResponse,
   HistoryResponse,
+  Me,
   PreviewResponse,
   QueueResponse,
+  SheetConnection,
   Submission,
 } from "./types";
 
@@ -125,10 +127,64 @@ export class MockApi implements Api {
   async destinations(): Promise<DestinationResponse> {
     return {
       destinations: [
-        { id: "sheet", label: "Leads 2026 (Google Sheet)", type: "google_sheet", active: true },
+        {
+          id: "sheet",
+          label: (this.sheetConnected ? "Ziga Leads" : "No sheet connected") + " (Google Sheet)",
+          type: "google_sheet",
+          active: true,
+        },
         { id: "notion", label: "Notion", type: "notion", disabled: true, coming_soon: true },
       ],
     };
+  }
+
+  // --- Auth / onboarding (mock: a pre-connected logged-in user so ?mock=1
+  // walks the whole authed experience without a backend) ---
+
+  private authed = true;
+  private googleConnected = true;
+  private sheetConnected = true;
+
+  async me(): Promise<Me> {
+    return {
+      authenticated: this.authed,
+      user: this.authed ? { id: 1, email: "you@example.com", email_verified: true } : null,
+      google_connected: this.googleConnected,
+      sheet_connected: this.sheetConnected,
+      config: { google_oauth: true, google_client_id: "mock-client", google_picker_api_key: "mock-key" },
+    };
+  }
+  async signup(): Promise<void> {
+    await delay(300);
+  }
+  async login(): Promise<void> {
+    await delay(300);
+    this.authed = true;
+  }
+  async logout(): Promise<void> {
+    this.authed = false;
+  }
+  async forgotPassword(): Promise<void> {
+    await delay(300);
+  }
+  async resetPassword(): Promise<void> {
+    await delay(300);
+  }
+  async disconnectGoogle(): Promise<void> {
+    this.googleConnected = false;
+    this.sheetConnected = false;
+  }
+  async createSheet(): Promise<SheetConnection> {
+    await delay(400);
+    this.googleConnected = true;
+    this.sheetConnected = true;
+    return { spreadsheet_id: "mock-sheet", sheet_tab: "Leads", created_by_app: true };
+  }
+  async attachSheet(spreadsheetId: string): Promise<SheetConnection> {
+    await delay(400);
+    this.googleConnected = true;
+    this.sheetConnected = true;
+    return { spreadsheet_id: spreadsheetId, sheet_tab: "Leads", created_by_app: false };
   }
 
   async history(): Promise<HistoryResponse> {

@@ -114,6 +114,29 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.Handle("GET /api/destination", protected(s.handleDestination))
 	mux.Handle("GET /api/history", protected(s.handleHistory))
 
-	mux.Handle("GET /", http.FileServerFS(static))
+	mux.Handle("GET /", s.spa(static))
 	return s.logging(mux)
+}
+
+// spa serves the embedded frontend, falling back to index.html for paths that
+// aren't real files. The React app uses client-side routing (BrowserRouter):
+// deep links and refreshes on /login, /reset, /onboarding, etc. must load the
+// SPA rather than 404. Real assets (JS/CSS) are still served directly.
+func (s *Server) spa(static fs.FS) http.Handler {
+	fileServer := http.FileServerFS(static)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		if p == "" {
+			p = "index.html"
+		}
+		if f, err := static.Open(p); err == nil {
+			f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// Unknown path → serve the SPA entry so client routing can handle it.
+		r = r.Clone(r.Context())
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
 }
