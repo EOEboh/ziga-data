@@ -13,6 +13,8 @@ import (
 	"github.com/EOEboh/ziga-data/internal/config"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/oauth"
+	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
 
@@ -30,6 +32,9 @@ type Server struct {
 	store     *store.Store
 	writer    RowWriter
 	mailer    mail.Mailer
+	oauth     *oauth.Config
+	// box encrypts OAuth tokens at rest; nil when Google OAuth is unconfigured.
+	box *secretbox.Box
 	// limiter is the single per-IP budget shared by every rate-limited
 	// endpoint: submit (LLM cost) and confirm (Google Sheets quota).
 	limiter *ipLimiter
@@ -49,9 +54,9 @@ type Server struct {
 	baseURL       string
 }
 
-func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter, m mail.Mailer) *Server {
+func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter, m mail.Mailer, oc *oauth.Config, box *secretbox.Box) *Server {
 	return &Server{
-		cfg: cfg, log: log, extractor: ex, store: st, writer: w, mailer: m,
+		cfg: cfg, log: log, extractor: ex, store: st, writer: w, mailer: m, oauth: oc, box: box,
 		limiter:       newIPLimiter(cfg.RatePerMin),
 		loginLimiter:  newIPLimiterBurst(20, 5),
 		resetLimiter:  newIPLimiterBurst(6, 3),
@@ -84,6 +89,12 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.Handle("POST /api/auth/password/forgot", s.rateLimitFor(s.resetLimiter, public(s.handleForgotPassword)))
 	mux.Handle("POST /api/auth/password/reset", public(s.handleResetPassword))
 	mux.Handle("GET /api/me", public(s.handleMe))
+
+	// Google OAuth (identity + drive.file). Start/callback are public; the
+	// callback establishes the session. Disconnect requires a session.
+	mux.Handle("GET /api/auth/google/start", public(s.handleGoogleStart))
+	mux.Handle("GET /api/auth/google/callback", public(s.handleGoogleCallback))
+	mux.Handle("POST /api/auth/google/disconnect", protected(s.handleGoogleDisconnect))
 
 	// Submission app (protected + user-scoped).
 	mux.Handle("POST /api/submit", s.rateLimit(protected(s.handleSubmit)))

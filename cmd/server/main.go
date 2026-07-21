@@ -20,6 +20,8 @@ import (
 	"github.com/EOEboh/ziga-data/internal/httpapi"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/oauth"
+	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/sheets"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
@@ -171,13 +173,28 @@ func main() {
 		mailer = mail.NewLogMailer(log)
 	}
 
+	// Google OAuth (identity + drive.file) and token encryption. When OAuth is
+	// unconfigured (dev) the box stays nil and the OAuth routes report 404.
+	oauthCfg := oauth.NewConfig(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.OAuthRedirectURL)
+	var box *secretbox.Box
+	if cfg.TokenEncryptionKey != "" {
+		box, err = secretbox.New(cfg.TokenEncryptionKey)
+		if err != nil {
+			log.Error("token encryption key", "err", err)
+			os.Exit(1)
+		}
+	}
+	if oauthCfg.Configured() {
+		log.Info("google oauth enabled", "scopes", oauthCfg.Scopes())
+	}
+
 	static, err := fs.Sub(ziga.WebFS, "web/dist")
 	if err != nil {
 		log.Error("embed", "err", err)
 		os.Exit(1)
 	}
 
-	srv := httpapi.New(cfg, log, extractor, st, writer, mailer)
+	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, box)
 	addr := ":" + cfg.Port
 	log.Info("listening", "addr", addr, "model", cfg.LLMModel, "schema", cfg.Schema.Name)
 	if err := http.ListenAndServe(addr, srv.Handler(static)); err != nil {

@@ -240,21 +240,46 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMe returns the current session's user (or authenticated:false) plus the
-// public config the frontend needs. Sheet/OAuth connection state is added by
-// later phases. Public route: never 401, so the SPA can bootstrap.
+// public config the frontend needs (Google client id / Picker key) and the
+// user's connection status. Public route: never 401, so the SPA can bootstrap.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	resp := map[string]any{
+		"config": map[string]any{
+			"google_oauth":          s.oauth != nil && s.oauth.Configured(),
+			"google_client_id":      s.googleClientID(),
+			"google_picker_api_key": s.cfg.GooglePickerAPIKey,
+		},
+	}
 	uid, ok := s.sessionUser(r)
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false, "user": nil})
+		resp["authenticated"] = false
+		resp["user"] = nil
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	u, err := s.store.GetUser(r.Context(), uid)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false, "user": nil})
+		resp["authenticated"] = false
+		resp["user"] = nil
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true,
-		"user":          toUserJSON(u),
-	})
+	resp["authenticated"] = true
+	resp["user"] = toUserJSON(u)
+	resp["google_connected"] = s.googleConnected(r, uid)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) googleClientID() string {
+	if s.oauth == nil {
+		return ""
+	}
+	return s.oauth.ClientID()
+}
+
+// googleConnected reports whether the user has a healthy (non-broken) Google
+// link.
+func (s *Server) googleConnected(r *http.Request, uid int64) bool {
+	acct, err := s.store.GetOAuthAccount(r.Context(), uid, googleProvider)
+	return err == nil && !acct.Broken()
 }
