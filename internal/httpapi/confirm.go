@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -100,7 +101,21 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(sub.Flags, &flags)
 	}
 
-	if err := s.writer.Append(ctx, s.buildRow(&res, flags)); err != nil {
+	writer, err := s.writerFor(ctx, uid)
+	if err != nil {
+		switch {
+		case errors.Is(err, errNoSheet):
+			httpError(w, http.StatusConflict, "Connect a destination sheet before confirming")
+		case errors.Is(err, errReconnect):
+			httpError(w, http.StatusConflict, "Reconnect your Google account to write to your sheet")
+		default:
+			s.log.Error("resolve writer", "id", id, "err", err)
+			httpError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+
+	if err := writer.Append(ctx, s.buildRow(&res, flags)); err != nil {
 		s.log.Error("sheet write failed", "id", id, "err", err)
 		if uerr := s.store.Update(ctx, uid, id, store.StatusFailedWrite, mergedJSON, err.Error()); uerr != nil {
 			s.log.Error("store update failed", "id", id, "err", uerr)

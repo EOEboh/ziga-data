@@ -16,6 +16,7 @@ import (
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/store"
+	"google.golang.org/api/option"
 )
 
 // RowWriter appends rows to the destination sheet and reads the tail back
@@ -35,6 +36,9 @@ type Server struct {
 	oauth     *oauth.Config
 	// box encrypts OAuth tokens at rest; nil when Google OAuth is unconfigured.
 	box *secretbox.Box
+	// sheetsOpts are extra Google API client options (a test endpoint override);
+	// empty in production.
+	sheetsOpts []option.ClientOption
 	// limiter is the single per-IP budget shared by every rate-limited
 	// endpoint: submit (LLM cost) and confirm (Google Sheets quota).
 	limiter *ipLimiter
@@ -95,6 +99,10 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.Handle("GET /api/auth/google/start", public(s.handleGoogleStart))
 	mux.Handle("GET /api/auth/google/callback", public(s.handleGoogleCallback))
 	mux.Handle("POST /api/auth/google/disconnect", protected(s.handleGoogleDisconnect))
+
+	// Destination sheet connection (protected).
+	mux.Handle("POST /api/sheets/create", protected(s.handleSheetsCreate))
+	mux.Handle("POST /api/sheets/attach", protected(s.handleSheetsAttach))
 
 	// Submission app (protected + user-scoped).
 	mux.Handle("POST /api/submit", s.rateLimit(protected(s.handleSubmit)))

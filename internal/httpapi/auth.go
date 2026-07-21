@@ -267,6 +267,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	resp["authenticated"] = true
 	resp["user"] = toUserJSON(u)
 	resp["google_connected"] = s.googleConnected(r, uid)
+	resp["sheet_connected"] = s.sheetConnected(r.Context(), uid)
 	writeJSON(w, http.StatusOK, resp)
 }
 
