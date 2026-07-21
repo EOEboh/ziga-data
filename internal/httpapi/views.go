@@ -14,7 +14,7 @@ const previewRows = 3
 // newest first. Drives the top-bar badge and restores in-progress reviews
 // after a reload.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.store.ListByStatuses(r.Context(),
+	subs, err := s.store.ListByStatuses(r.Context(), userID(r),
 		[]store.Status{store.StatusPending, store.StatusFailedWrite}, 100)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
@@ -69,7 +69,7 @@ func (s *Server) handleDestination(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.store.ListByStatus(r.Context(), store.StatusWritten, 50)
+	subs, err := s.store.ListByStatus(r.Context(), userID(r), store.StatusWritten, 50)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return

@@ -33,6 +33,12 @@ type Server struct {
 	// confirmMu serializes confirms; concurrent confirms of the same
 	// submission would otherwise append duplicate sheet rows.
 	confirmMu sync.Mutex
+
+	// bridge state is a temporary Phase-1 scaffold: a single seeded dev user
+	// injected into every request so the app runs before real auth lands in
+	// Phase 2, which replaces devUser with requireAuth and removes this.
+	bridgeMu   sync.Mutex
+	bridgeUser int64
 }
 
 func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter) *Server {
@@ -46,14 +52,19 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	mux.Handle("POST /api/submit", s.rateLimit(http.HandlerFunc(s.handleSubmit)))
-	mux.Handle("POST /api/submissions/{id}/confirm", s.rateLimit(http.HandlerFunc(s.handleConfirm)))
-	mux.HandleFunc("POST /api/submissions/{id}/discard", s.handleDiscard)
-	mux.HandleFunc("GET /api/submissions/{id}/image", s.handleImage)
-	mux.HandleFunc("GET /api/queue", s.handleQueue)
-	mux.HandleFunc("GET /api/preview", s.handlePreview)
-	mux.HandleFunc("GET /api/destination", s.handleDestination)
-	mux.HandleFunc("GET /api/history", s.handleHistory)
+	// api wraps a handler with the current-user middleware; every /api route
+	// operates only on the authenticated user's data. (Phase 1: devUser seeds
+	// and injects one user; Phase 2 swaps in requireAuth.)
+	api := func(h http.HandlerFunc) http.Handler { return s.devUser(h) }
+
+	mux.Handle("POST /api/submit", s.rateLimit(api(s.handleSubmit)))
+	mux.Handle("POST /api/submissions/{id}/confirm", s.rateLimit(api(s.handleConfirm)))
+	mux.Handle("POST /api/submissions/{id}/discard", api(s.handleDiscard))
+	mux.Handle("GET /api/submissions/{id}/image", api(s.handleImage))
+	mux.Handle("GET /api/queue", api(s.handleQueue))
+	mux.Handle("GET /api/preview", api(s.handlePreview))
+	mux.Handle("GET /api/destination", api(s.handleDestination))
+	mux.Handle("GET /api/history", api(s.handleHistory))
 	mux.Handle("GET /", http.FileServerFS(static))
 	return s.logging(mux)
 }

@@ -93,6 +93,7 @@ func parseSubmission(r *http.Request) (text string, image []byte, mediaType stri
 // to the sheet here — that only happens on an explicit confirm.
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	uid := userID(r)
 	text, image, mediaType, errMsg := parseSubmission(r)
 	if errMsg != "" {
 		httpError(w, http.StatusBadRequest, errMsg)
@@ -100,12 +101,12 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	hash := store.ContentHash(text, image, now)
+	hash := store.ContentHash(uid, text, image, now)
 	log := s.log.With("hash", hash[:12])
 
 	// Idempotency: an identical submission today returns the prior outcome
 	// without another LLM call.
-	if prior, err := s.store.FindByHash(ctx, hash); err != nil {
+	if prior, err := s.store.FindByHash(ctx, uid, hash); err != nil {
 		log.Error("dedup lookup failed", "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -131,6 +132,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	flagsJSON, _ := json.Marshal(verdict.Flags)
 
 	sub := &store.Submission{
+		UserID:         uid,
 		ContentHash:    hash,
 		Status:         store.StatusPending,
 		Extraction:     resultJSON,
@@ -148,7 +150,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if duplicate {
 		// Lost an insert race with an identical concurrent submission.
-		if prior, err := s.store.FindByHash(ctx, hash); err == nil && prior != nil {
+		if prior, err := s.store.FindByHash(ctx, uid, hash); err == nil && prior != nil {
 			writeJSON(w, http.StatusOK, s.submissionResponse(prior, true))
 			return
 		}

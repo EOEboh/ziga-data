@@ -100,6 +100,18 @@ func handler(s *Server) http.Handler {
 	return s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>ok</html>")}})
 }
 
+// bridgeUID returns the id of the seeded dev user that the Phase-1 devUser
+// middleware attributes every request to, so store assertions can scope to the
+// same tenant the handlers wrote as.
+func bridgeUID(t *testing.T, s *Server) int64 {
+	t.Helper()
+	uid, err := s.ensureBridgeUser(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uid
+}
+
 func postText(t *testing.T, h http.Handler, text string) (*httptest.ResponseRecorder, submissionResponse) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -188,7 +200,7 @@ func TestConfirmWritesEditedRow(t *testing.T) {
 		}
 	}
 	// The edited extraction is persisted.
-	stored, _ := s.store.Get(context.Background(), sub.ID)
+	stored, _ := s.store.Get(context.Background(), bridgeUID(t, s), sub.ID)
 	if stored.Status != store.StatusWritten || !strings.Contains(string(stored.Extraction), "Jane Doe") {
 		t.Fatalf("stored: status=%s extraction=%s", stored.Status, stored.Extraction)
 	}
@@ -245,7 +257,7 @@ func TestConfirmFailureKeepsDataAndRetries(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || resp["status"] != string(store.StatusFailedWrite) {
 		t.Fatalf("code=%d resp=%v", rec.Code, resp)
 	}
-	stored, _ := s.store.Get(context.Background(), sub.ID)
+	stored, _ := s.store.Get(context.Background(), bridgeUID(t, s), sub.ID)
 	if stored.Status != store.StatusFailedWrite {
 		t.Fatalf("status=%s, want failed_write", stored.Status)
 	}
@@ -282,7 +294,7 @@ func TestDiscardFreesSubmission(t *testing.T) {
 	}
 	// Soft delete: the row is retained but leaves the queue and frees the
 	// dedup hash for genuine resubmission.
-	kept, _ := s.store.Get(context.Background(), sub.ID)
+	kept, _ := s.store.Get(context.Background(), bridgeUID(t, s), sub.ID)
 	if kept == nil || kept.Status != store.StatusDiscarded {
 		t.Fatalf("discarded submission must be retained with status discarded, got %+v", kept)
 	}

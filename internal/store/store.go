@@ -1,12 +1,16 @@
 // Package store persists submissions in SQLite: dedup keys, extraction
 // results, the full original input for the review pane, and the pending /
-// failed-write queues (status filters over one table).
+// failed-write queues (status filters over one table). Every submission
+// belongs to a user (multi-tenant): reads and writes are scoped by user_id so
+// one tenant can never see or act on another's data. The users, sessions,
+// oauth_accounts, user_sheets and auth_tokens tables live in auth.go.
 package store
 
 import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,9 +29,10 @@ const (
 	StatusDiscarded   Status = "discarded" // soft-deleted; row retained, dedup hash freed
 )
 
-// Submission is one processed submission.
+// Submission is one processed submission, owned by a user.
 type Submission struct {
 	ID             int64
+	UserID         int64
 	ContentHash    string
 	Status         Status
 	Extraction     []byte // JSON blob of llm.Result
@@ -56,6 +61,7 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS submissions (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id          INTEGER,
 			content_hash     TEXT NOT NULL UNIQUE,
 			status           TEXT NOT NULL,
 			extraction       TEXT,
@@ -73,6 +79,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := createAuthTables(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate auth: %w", err)
+	}
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -80,10 +90,11 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// migrate upgrades databases created before the review-pane rework: input
-// columns are added (SQLite has no ADD COLUMN IF NOT EXISTS, so existing
-// columns are checked via PRAGMA first) and the retired needs_review status
-// collapses into pending — every extraction is user-confirmed now.
+// migrate upgrades older databases in place. SQLite has no ADD COLUMN IF NOT
+// EXISTS, so existing columns are checked via PRAGMA first: input columns were
+// added for the review pane, user_id for multi-tenancy. The retired
+// needs_review status collapses into pending — every extraction is
+// user-confirmed now.
 func migrate(db *sql.DB) error {
 	rows, err := db.Query(`PRAGMA table_info(submissions)`)
 	if err != nil {
@@ -111,6 +122,7 @@ func migrate(db *sql.DB) error {
 		"input_image":      "BLOB",
 		"input_image_type": "TEXT",
 		"settled_at":       "TEXT",
+		"user_id":          "INTEGER",
 	} {
 		if !have[col] {
 			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE submissions ADD COLUMN %s %s`, col, typ)); err != nil {
@@ -120,6 +132,13 @@ func migrate(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`UPDATE submissions SET status = ? WHERE status = 'needs_review'`, StatusPending); err != nil {
+		return err
+	}
+
+	// The per-tenant queue index is created here, after the user_id column is
+	// guaranteed to exist (it may have just been added above), so upgrading an
+	// old database doesn't index a missing column.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_submissions_user_status ON submissions(user_id, status)`); err != nil {
 		return err
 	}
 
@@ -134,18 +153,24 @@ func migrate(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// ContentHash is the dedup key: submitted text + image bytes + a day bucket,
-// so an accidental double-submit doesn't create a duplicate row, but the same
-// lead re-submitted on a later day is allowed through.
-func ContentHash(text string, image []byte, submitted time.Time) string {
+// ContentHash is the per-user dedup key: the owning user's id + submitted text
+// + image bytes + a day bucket. Including the user id means two different users
+// submitting identical content never collide on the globally-unique
+// content_hash column, while an accidental double-submit by the same user on
+// the same day is still deduplicated; the same lead re-submitted on a later day
+// is allowed through.
+func ContentHash(userID int64, text string, image []byte, submitted time.Time) string {
 	h := sha256.New()
+	var uid [8]byte
+	binary.BigEndian.PutUint64(uid[:], uint64(userID))
+	h.Write(uid[:])
 	h.Write([]byte(text))
 	h.Write(image)
 	h.Write([]byte(submitted.UTC().Format("2006-01-02")))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-const submissionCols = `id, content_hash, status, extraction, flags, input_excerpt,
+const submissionCols = `id, user_id, content_hash, status, extraction, flags, input_excerpt,
 	input_text, input_image, input_image_type, error, created_at, settled_at`
 
 type scanner interface {
@@ -155,11 +180,13 @@ type scanner interface {
 func scanSubmission(row scanner) (*Submission, error) {
 	var sub Submission
 	var createdAt string
+	var userID sql.NullInt64
 	var extraction, flags, excerpt, inputText, imageType, errMsg, settledAt sql.NullString
-	if err := row.Scan(&sub.ID, &sub.ContentHash, &sub.Status, &extraction, &flags,
+	if err := row.Scan(&sub.ID, &userID, &sub.ContentHash, &sub.Status, &extraction, &flags,
 		&excerpt, &inputText, &sub.InputImage, &imageType, &errMsg, &createdAt, &settledAt); err != nil {
 		return nil, err
 	}
+	sub.UserID = userID.Int64
 	sub.Extraction = []byte(extraction.String)
 	sub.Flags = []byte(flags.String)
 	sub.InputExcerpt = excerpt.String
@@ -173,11 +200,13 @@ func scanSubmission(row scanner) (*Submission, error) {
 	return &sub, nil
 }
 
-// FindByHash returns the prior submission with this hash, or nil.
-func (s *Store) FindByHash(ctx context.Context, hash string) (*Submission, error) {
+// FindByHash returns the given user's prior submission with this hash, or nil.
+// The hash already embeds the user id; the user_id predicate is defence in
+// depth against a hash collision leaking another tenant's row.
+func (s *Store) FindByHash(ctx context.Context, userID int64, hash string) (*Submission, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+submissionCols+`
-		FROM submissions WHERE content_hash = ?`, hash)
+		FROM submissions WHERE content_hash = ? AND user_id = ?`, hash, userID)
 	sub, err := scanSubmission(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -185,11 +214,13 @@ func (s *Store) FindByHash(ctx context.Context, hash string) (*Submission, error
 	return sub, err
 }
 
-// Get returns the submission with this id, or nil when absent.
-func (s *Store) Get(ctx context.Context, id int64) (*Submission, error) {
+// Get returns the user's submission with this id, or nil when absent. A row
+// owned by another user reads as absent (nil), so callers return 404 and ids
+// stay non-enumerable across tenants.
+func (s *Store) Get(ctx context.Context, userID, id int64) (*Submission, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+submissionCols+`
-		FROM submissions WHERE id = ?`, id)
+		FROM submissions WHERE id = ? AND user_id = ?`, id, userID)
 	sub, err := scanSubmission(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -197,16 +228,17 @@ func (s *Store) Get(ctx context.Context, id int64) (*Submission, error) {
 	return sub, err
 }
 
-// Insert records a processed submission and sets sub.ID. If another request
-// with the same hash won the race, the insert is a no-op and duplicate=true.
+// Insert records a processed submission and sets sub.ID. sub.UserID must be
+// set by the caller. If another request with the same hash won the race, the
+// insert is a no-op and duplicate=true.
 func (s *Store) Insert(ctx context.Context, sub *Submission) (duplicate bool, err error) {
 	sub.CreatedAt = time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO submissions (content_hash, status, extraction, flags, input_excerpt,
+		INSERT INTO submissions (user_id, content_hash, status, extraction, flags, input_excerpt,
 			input_text, input_image, input_image_type, error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(content_hash) DO NOTHING`,
-		sub.ContentHash, sub.Status, string(sub.Extraction), string(sub.Flags),
+		sub.UserID, sub.ContentHash, sub.Status, string(sub.Extraction), string(sub.Flags),
 		sub.InputExcerpt, sub.InputText, sub.InputImage, sub.InputImageType,
 		sub.Error, sub.CreatedAt.Format(time.RFC3339))
 	if err != nil {
@@ -224,16 +256,17 @@ func (s *Store) Insert(ctx context.Context, sub *Submission) (duplicate bool, er
 }
 
 // Update sets the status, extraction blob (the user may have edited fields
-// before confirming), and error message for one submission. Reaching a
-// settled status (written / discarded) stamps settled_at once, which starts
-// the retention clock for purging the original input.
-func (s *Store) Update(ctx context.Context, id int64, status Status, extraction []byte, errMsg string) error {
+// before confirming), and error message for one of the user's submissions.
+// Reaching a settled status (written / discarded) stamps settled_at once,
+// which starts the retention clock for purging the original input. Updating a
+// row the user does not own is "not found".
+func (s *Store) Update(ctx context.Context, userID, id int64, status Status, extraction []byte, errMsg string) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE submissions SET status = ?, extraction = ?, error = ?,
 			settled_at = CASE WHEN ? IN (?, ?) THEN COALESCE(settled_at, ?) ELSE settled_at END
-		WHERE id = ?`,
+		WHERE id = ? AND user_id = ?`,
 		status, string(extraction), errMsg,
-		status, StatusWritten, StatusDiscarded, time.Now().UTC().Format(time.RFC3339), id)
+		status, StatusWritten, StatusDiscarded, time.Now().UTC().Format(time.RFC3339), id, userID)
 	if err != nil {
 		return err
 	}
@@ -247,25 +280,26 @@ func (s *Store) Update(ctx context.Context, id int64, status Status, extraction 
 	return nil
 }
 
-// Discard soft-deletes a submission: the row is retained with status
-// discarded, and the content hash is rewritten to a per-row tombstone
-// ("discarded:{id}:{hash}") so the UNIQUE constraint stays satisfied while
-// the original hash is freed — the same content can be genuinely resubmitted
-// the same day. Discarding an already-discarded submission is a no-op.
-func (s *Store) Discard(ctx context.Context, id int64) error {
+// Discard soft-deletes one of the user's submissions: the row is retained with
+// status discarded, and the content hash is rewritten to a per-row tombstone
+// ("discarded:{id}:{hash}") so the UNIQUE constraint stays satisfied while the
+// original hash is freed — the same content can be genuinely resubmitted the
+// same day. Discarding an already-discarded submission, or one the user does
+// not own, is a no-op.
+func (s *Store) Discard(ctx context.Context, userID, id int64) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE submissions
 		SET status = ?, content_hash = 'discarded:' || id || ':' || content_hash,
 			settled_at = COALESCE(settled_at, ?)
-		WHERE id = ? AND status != ?`,
-		StatusDiscarded, time.Now().UTC().Format(time.RFC3339), id, StatusDiscarded)
+		WHERE id = ? AND user_id = ? AND status != ?`,
+		StatusDiscarded, time.Now().UTC().Format(time.RFC3339), id, userID, StatusDiscarded)
 	return err
 }
 
 // PurgeInputs nulls the stored original input (full text, image blob, image
-// type) of submissions settled before the cutoff. Extraction results and the
-// short excerpt are kept — only raw originals are purged. Returns the number
-// of rows purged.
+// type) of submissions settled before the cutoff. It runs across all tenants
+// as a background retention sweep. Extraction results and the short excerpt are
+// kept — only raw originals are purged. Returns the number of rows purged.
 func (s *Store) PurgeInputs(ctx context.Context, cutoff time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE submissions
@@ -280,18 +314,20 @@ func (s *Store) PurgeInputs(ctx context.Context, cutoff time.Time) (int64, error
 	return res.RowsAffected()
 }
 
-// ListByStatus returns submissions in a given state, newest first.
-func (s *Store) ListByStatus(ctx context.Context, status Status, limit int) ([]Submission, error) {
-	return s.ListByStatuses(ctx, []Status{status}, limit)
+// ListByStatus returns the user's submissions in a given state, newest first.
+func (s *Store) ListByStatus(ctx context.Context, userID int64, status Status, limit int) ([]Submission, error) {
+	return s.ListByStatuses(ctx, userID, []Status{status}, limit)
 }
 
-// ListByStatuses returns submissions in any of the given states, newest first.
-func (s *Store) ListByStatuses(ctx context.Context, statuses []Status, limit int) ([]Submission, error) {
+// ListByStatuses returns the user's submissions in any of the given states,
+// newest first.
+func (s *Store) ListByStatuses(ctx context.Context, userID int64, statuses []Status, limit int) ([]Submission, error) {
 	placeholders, args := statusArgs(statuses)
+	args = append([]any{userID}, args...)
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+submissionCols+`
-		FROM submissions WHERE status IN (`+placeholders+`) ORDER BY id DESC LIMIT ?`, args...)
+		FROM submissions WHERE user_id = ? AND status IN (`+placeholders+`) ORDER BY id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -307,12 +343,14 @@ func (s *Store) ListByStatuses(ctx context.Context, statuses []Status, limit int
 	return out, rows.Err()
 }
 
-// CountByStatus counts submissions in any of the given states (queue badge).
-func (s *Store) CountByStatus(ctx context.Context, statuses ...Status) (int, error) {
+// CountByStatus counts the user's submissions in any of the given states
+// (queue badge).
+func (s *Store) CountByStatus(ctx context.Context, userID int64, statuses ...Status) (int, error) {
 	placeholders, args := statusArgs(statuses)
+	args = append([]any{userID}, args...)
 	var n int
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM submissions WHERE status IN (`+placeholders+`)`, args...).Scan(&n)
+		SELECT COUNT(*) FROM submissions WHERE user_id = ? AND status IN (`+placeholders+`)`, args...).Scan(&n)
 	return n, err
 }
 
