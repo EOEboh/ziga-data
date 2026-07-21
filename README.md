@@ -158,6 +158,15 @@ Deliberately out of scope for now:
 - Multi-lead extraction (splitting one paste into several rows; today only the primary lead is extracted and a banner is shown)
 - History depth (pagination/search beyond the last 50 written submissions)
 
+Deferred from the multi-tenant auth pass:
+
+- **Billing / subscriptions** — no plans or payment yet; every account is free.
+- **Team accounts** — one user = one tenant; no shared workspaces or member roles.
+- **Marketing site** — the app is the only surface; `zigadata.com` marketing pages are separate.
+- **Google app-verification submission** — the code targets the `drive.file`
+  scope (not the broad `spreadsheets` scope) so verification stays light; the
+  formal submission happens before a public launch.
+
 ## Changelog
 
 - 2026-07 — renamed to **Ziga Data** (formerly sheetdrop)
