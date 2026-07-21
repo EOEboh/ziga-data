@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy | Ziga Data</title>
+  <meta name="description" content="How Ziga Data handles your Google account data, the leads you submit, and the Google Sheet you connect.">
+  <link rel="canonical" href="https://zigadata.com/privacy">
+  <meta name="theme-color" content="#FAFAF8">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav__inner">
+      <a class="wordmark" href="/">Ziga Data</a>
+      <a class="btn btn--ghost" href="https://app.zigadata.com/login">Log in</a>
+      <a class="btn btn--primary" href="https://app.zigadata.com/signup">Get started</a>
+    </div>
+  </header>
+
+  <main id="main" class="legal">
+    <h1>Privacy Policy</h1>
+    <p class="legal__updated">Last updated: 22 July 2026</p>
+
+    <!-- ====================================================================
+         OWNER REVIEW: everything between these markers is a working baseline
+         written from what the application actually does today. It is accurate
+         as of the date above and is written to satisfy Google OAuth
+         verification. Review it, amend it, or replace it wholesale with your
+         own counsel's wording.
+
+         Before launch, confirm each of these still holds:
+           - the requested OAuth scopes (see "What we access in your Google
+             account") match the consent screen exactly
+           - the retention window matches the deployed RETENTION_DAYS setting
+           - the subprocessor list is complete
+           - hello@zigadata.com is receiving mail
+         ==================================================================== -->
+
+    <p>Ziga Data is a tool for turning messy lead information into rows in a Google Sheet you own. This policy explains what we collect, why, and what we do not do. It covers the website at zigadata.com and the application at app.zigadata.com.</p>
+
+    <p>Ziga Data is operated by CapEO Labs. If you have a question about anything here, write to <a href="mailto:hello@zigadata.com">hello@zigadata.com</a>.</p>
+
+    <h2>What we access in your Google account</h2>
+
+    <p>When you connect your Google account, Ziga Data asks for these permissions and nothing else:</p>
+
+    <ul>
+      <li><code>openid</code>, <code>userinfo.email</code>, and <code>userinfo.profile</code> so we can sign you in and know which account a lead belongs to.</li>
+      <li><code>drive.file</code> so we can write rows to the specific Google Sheet you create through Ziga Data or pick with the Google file picker.</li>
+    </ul>
+
+    <div class="legal__callout">
+      <p><strong>We do not request broad access to your Google Drive.</strong> The <code>drive.file</code> permission is per file. Ziga Data can only see and write to the sheet you create or select through the app. Every other file in your Drive, including every other spreadsheet, stays invisible to us.</p>
+    </div>
+
+    <p>We never ask for permission to read your Gmail, your calendar, or your contacts.</p>
+
+    <h2>What we store</h2>
+
+    <ul>
+      <li><strong>Your account.</strong> Your email address, your Google account identifier, and the date you signed up. If you signed up with a password, we store a hash of it, never the password itself.</li>
+      <li><strong>Your Google connection.</strong> The access and refresh tokens Google issues so we can write to your sheet without asking you to sign in every time. These are encrypted at rest with AES-256-GCM before they touch our database.</li>
+      <li><strong>The leads you submit.</strong> The text or image you paste or upload, the fields extracted from it, and whether you confirmed or discarded it.</li>
+      <li><strong>Your destination.</strong> The identifier of the Google Sheet you connected, so we know where to write.</li>
+    </ul>
+
+    <h2>How long we keep it</h2>
+
+    <p>The raw material you submit is deleted on a schedule. Once a lead has been confirmed or discarded, we keep the full original text and any uploaded image for 14 days, then permanently delete them. What remains after that is the extracted fields and a short excerpt, so your history stays readable.</p>
+
+    <p>Account records are kept for as long as you have an account. When you delete your account, we delete your account record, your stored Google tokens, and your submission history.</p>
+
+    <h2>Who else sees your data</h2>
+
+    <p>We do not sell your data, we do not rent it, and we do not share it for advertising. We use a small number of service providers to run the product:</p>
+
+    <ul>
+      <li><strong>OpenAI</strong> processes the text and images you submit in order to extract the fields. Content sent through the API is not used to train their models.</li>
+      <li><strong>Google</strong> receives the rows you confirm, because they are written to your own Google Sheet in your own Google account.</li>
+      <li><strong>Our hosting provider</strong> runs the servers and stores the database.</li>
+    </ul>
+
+    <p>We may disclose data if we are legally required to. If that happens and we are permitted to tell you, we will.</p>
+
+    <h2>Rows written to your sheet</h2>
+
+    <p>Once a row is written to your Google Sheet, it lives in your Google account and is governed by your agreement with Google, not by this policy. You can edit or delete it there at any time. Deleting your Ziga Data account does not remove rows we already wrote to your sheet, because that sheet is yours.</p>
+
+    <h2>Limited Use disclosure</h2>
+
+    <p>Ziga Data's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements. We use Google user data only to provide and improve the features you asked for, we do not transfer it except as described above, we do not use it for advertising, and we do not allow humans to read it except with your explicit permission, for security purposes, to comply with applicable law, or where the data is aggregated and anonymized.</p>
+
+    <h2>Your choices</h2>
+
+    <ul>
+      <li><strong>Disconnect Google.</strong> Revoke Ziga Data's access at any time from your <a href="https://myaccount.google.com/permissions" rel="noopener">Google account permissions page</a>. We stop being able to write to your sheet immediately.</li>
+      <li><strong>See or export your data.</strong> Your confirmed leads are already in your own spreadsheet. For anything else we hold, write to us and we will send it to you.</li>
+      <li><strong>Delete your data.</strong> Write to <a href="mailto:hello@zigadata.com">hello@zigadata.com</a> and we will delete your account and everything attached to it.</li>
+    </ul>
+
+    <h2>Security</h2>
+
+    <p>Traffic to and from Ziga Data is encrypted in transit. Google OAuth tokens are encrypted at rest. Access to production systems is limited to the people who operate the service. No system is perfectly secure, and we will not pretend otherwise, but we will tell you promptly if something happens that affects your data.</p>
+
+    <h2>Children</h2>
+
+    <p>Ziga Data is not intended for anyone under 16, and we do not knowingly collect data from them.</p>
+
+    <h2>Changes to this policy</h2>
+
+    <p>If we change this policy in a way that matters, we will update the date at the top and tell account holders by email before the change takes effect.</p>
+
+    <h2>Contact</h2>
+
+    <p>Questions, requests, or complaints: <a href="mailto:hello@zigadata.com">hello@zigadata.com</a>.</p>
+
+    <!-- ====================================================================
+         END OWNER REVIEW
+         ==================================================================== -->
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer__inner">
+      <nav class="footer__links" aria-label="Legal and contact">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/terms">Terms</a>
+        <a href="mailto:hello@zigadata.com">hello@zigadata.com</a>
+      </nav>
+      <p>&copy; 2026 Ziga Data / CapEO Labs</p>
+    </div>
+  </footer>
+</body>
+</html>
