@@ -1,0 +1,21 @@
+# ziga-backup — nightly ziga-data database backup to R2.
+#
+# WHAT:  Runs /opt/ziga/backup-ziga.sh once a night as the ziga user.
+# WHERE: Install to /etc/cron.d/ziga-backup (root:root, chmod 644). See
+#        deploy/RUNBOOK.md §e. cron mails/logs any nonzero exit.
+#
+# Schedule: 02:00 UTC == 03:00 in the server's UTC+1 local time — a low-traffic
+# hour. cron.d entries are always in the system timezone (UTC here).
+#
+# Config for the script lives in the environment below. Bucket/prefix are safe
+# to keep here; R2 credentials live in the ziga user's rclone.conf, NOT here.
+# Adjust the RCLONE_REMOTE / R2_BUCKET / R2_PREFIX values to match hookdrop's
+# existing R2 setup (see RUNBOOK §e).
+
+SHELL=/bin/bash
+RCLONE_REMOTE=r2
+R2_BUCKET=CHANGE_ME_BUCKET
+R2_PREFIX=ziga/backups
+
+# m h dom mon dow user  command
+0 2 * * *   ziga   /opt/ziga/backup-ziga.sh
