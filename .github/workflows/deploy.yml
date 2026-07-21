@@ -1,0 +1,177 @@
+# deploy.yml — CI for ziga-data: verify, cross-compile, and deploy on push to main.
+#
+# Deploys over SSH to the Hetzner box as a restricted, non-root user whose sudo
+# is scoped to `systemctl restart ziga` only. Server-side setup, the deploy user,
+# and the three required secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY) are
+# documented in deploy/RUNBOOK.md §g.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; don't cancel an in-flight deploy (a half-applied binary
+# swap is worse than waiting).
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Must match PORT in /opt/ziga/ziga.env. Used by the post-deploy health check.
+  HEALTH_URL: http://localhost:8080/healthz
+  NODE_VERSION: "22"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # npm ci installs the exact, locked dependency tree. Because Vite/Rollup
+      # versions are pinned by the lockfile, the build output (and its content
+      # hashes) is reproducible, which is what makes the stale-dist guard below
+      # reliable.
+      - name: Install web dependencies
+        run: npm --prefix web ci
+
+      - name: Type-check the frontend
+        run: make ui-check
+
+      - name: Go vet + tests
+        run: make test
+
+      - name: Build the frontend
+        run: make ui-build
+
+      # Protects the go:embed contract: web/dist is a committed build artifact.
+      # If a freshly built dist differs from what's committed, the developer
+      # forgot to rebuild+commit it, and the deployed binary would embed stale
+      # assets. Fail with an actionable message.
+      - name: Guard against stale committed web/dist
+        run: |
+          if [ -n "$(git status --porcelain web/dist)" ]; then
+            echo "::error::web/dist is stale — the committed build does not match a fresh 'make ui-build'."
+            echo "Run 'make ui-build' locally and commit the updated web/dist, then push again."
+            git status --porcelain web/dist
+            git --no-pager diff --stat web/dist
+            exit 1
+          fi
+          echo "web/dist is up to date."
+
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pure-Go SQLite (modernc.org/sqlite) ⇒ CGO can stay off for a static,
+      # cross-compiled Linux/amd64 binary. web/dist is committed, so no Node
+      # build is needed here for the go:embed to succeed.
+      - name: Build linux/amd64 binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ziga ./cmd/server
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziga-binary
+          path: ziga
+          retention-days: 7
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: [verify, build]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ziga-binary
+          path: .
+
+      # Copy the new binary alongside the running one (same filesystem so the
+      # later mv is atomic). It is swapped into place in the next step.
+      - name: Copy binary to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: ziga
+          target: /opt/ziga/ziga.new
+          # scp-action writes the file into target/; normalize the name below.
+
+      # Atomic swap + restart, then a retrying health check. On failure, roll
+      # back to the previous binary and fail the workflow loudly. Exactly one
+      # .prev generation is kept.
+      - name: Swap, restart, health-check, rollback-on-failure
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: HEALTH_URL
+          script: |
+            set -euo pipefail
+            cd /opt/ziga
+
+            # scp-action may deliver the file as ziga.new/ziga; normalize it.
+            if [ -d ziga.new ]; then
+              mv ziga.new/ziga ziga.new.bin
+              rmdir ziga.new
+              mv ziga.new.bin ziga.new
+            fi
+            chmod 755 ziga.new
+
+            # Atomic swap: keep the current binary as the single rollback copy.
+            if [ -f ziga ]; then
+              mv ziga ziga.prev
+            fi
+            mv ziga.new ziga
+
+            sudo systemctl restart ziga
+
+            # Health check: ~10 tries, 2s apart.
+            ok=0
+            for i in $(seq 1 10); do
+              if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+                echo "health check passed on attempt $i"
+                ok=1
+                break
+              fi
+              echo "health check attempt $i/10 failed; retrying in 2s..."
+              sleep 2
+            done
+
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::health check failed after deploy — rolling back"
+              if [ -f ziga.prev ]; then
+                mv ziga.prev ziga
+                sudo systemctl restart ziga
+                echo "rolled back to previous binary"
+              else
+                echo "no ziga.prev to roll back to!"
+              fi
+              exit 1
+            fi
+
+            echo "deploy successful"
