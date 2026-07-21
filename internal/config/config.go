@@ -47,6 +47,22 @@ type Config struct {
 	HeaderRow  bool
 	SchemaPath string
 	Schema     Schema
+
+	// Auth / multi-tenant configuration.
+	// SessionSecret keys the HMAC on CSRF tokens. If empty at boot an ephemeral
+	// one is generated (sessions/CSRF then don't survive a restart) — set it in
+	// production.
+	SessionSecret string
+	// AppBaseURL is the public origin, used to build email links and to decide
+	// whether cookies get the Secure attribute (https).
+	AppBaseURL string
+	// SMTP_* configure the outbound mailer. When SMTPHost is empty the app uses
+	// a dev mailer that logs verification/reset links instead of sending them.
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 func envOr(key, def string) string {
@@ -76,6 +92,13 @@ func Load() (*Config, error) {
 		SchemaPath:      envOr("SCHEMA_PATH", "config/schema.json"),
 		RatePerMin:      10,
 		RetentionDays:   14,
+		SessionSecret:   os.Getenv("SESSION_SECRET"),
+		AppBaseURL:      envOr("APP_BASE_URL", "http://localhost:8080"),
+		SMTPHost:        os.Getenv("SMTP_HOST"),
+		SMTPPort:        envOr("SMTP_PORT", "587"),
+		SMTPUsername:    os.Getenv("SMTP_USERNAME"),
+		SMTPPassword:    os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:        envOr("SMTP_FROM", "ziga@localhost"),
 	}
 	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)

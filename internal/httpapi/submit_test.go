@@ -15,9 +15,13 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"time"
+
+	"github.com/EOEboh/ziga-data/internal/auth"
 	"github.com/EOEboh/ziga-data/internal/config"
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/mail"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
 
@@ -82,8 +86,10 @@ func testServer(t *testing.T, ex llm.Extractor, w RowWriter) *Server {
 	}
 	t.Cleanup(func() { st.Close() })
 	cfg := &config.Config{
-		RatePerMin: 1000,
-		SheetTab:   "Leads",
+		RatePerMin:    1000,
+		SheetTab:      "Leads",
+		SessionSecret: "test-secret",
+		AppBaseURL:    "http://localhost:8080",
 		Schema: config.Schema{
 			RequiredFields: []string{"contact", "need"},
 			Fields: []config.Field{
@@ -93,23 +99,49 @@ func testServer(t *testing.T, ex llm.Extractor, w RowWriter) *Server {
 			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
 		},
 	}
-	return New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), ex, st, w)
+	return New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), ex, st, w, &mail.FakeMailer{})
 }
 
+const testUserEmail = "user@test.example"
+
+// handler builds the route tree and wraps it so every request carries a valid
+// session and CSRF token for a single seeded, verified test user — the tenant
+// that testUID resolves to. This lets the submission tests exercise the real
+// requireAuth + CSRF middleware without each test re-plumbing auth.
 func handler(s *Server) http.Handler {
-	return s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>ok</html>")}})
+	real := s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>ok</html>")}})
+	ctx := context.Background()
+	u, err := s.store.GetUserByEmail(ctx, testUserEmail)
+	if err != nil {
+		if u, err = s.store.CreateUser(ctx, testUserEmail, ""); err != nil {
+			panic(err)
+		}
+		s.store.MarkEmailVerified(ctx, u.ID)
+	}
+	token, _ := auth.RandomToken()
+	s.store.CreateSession(ctx, auth.HashToken(token), u.ID, time.Now().Add(time.Hour))
+	csrf, _ := auth.NewCSRFToken(s.sessionSecret)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := r.Cookie(sessionCookie); err != nil {
+			r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+		}
+		if _, err := r.Cookie(csrfCookie); err != nil {
+			r.AddCookie(&http.Cookie{Name: csrfCookie, Value: csrf})
+			r.Header.Set("X-CSRF-Token", csrf)
+		}
+		real.ServeHTTP(w, r)
+	})
 }
 
-// bridgeUID returns the id of the seeded dev user that the Phase-1 devUser
-// middleware attributes every request to, so store assertions can scope to the
-// same tenant the handlers wrote as.
-func bridgeUID(t *testing.T, s *Server) int64 {
+// testUID returns the id of the seeded test user, so store assertions scope to
+// the same tenant the handlers wrote as.
+func testUID(t *testing.T, s *Server) int64 {
 	t.Helper()
-	uid, err := s.ensureBridgeUser(context.Background())
+	u, err := s.store.GetUserByEmail(context.Background(), testUserEmail)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return uid
+	return u.ID
 }
 
 func postText(t *testing.T, h http.Handler, text string) (*httptest.ResponseRecorder, submissionResponse) {
@@ -200,7 +232,7 @@ func TestConfirmWritesEditedRow(t *testing.T) {
 		}
 	}
 	// The edited extraction is persisted.
-	stored, _ := s.store.Get(context.Background(), bridgeUID(t, s), sub.ID)
+	stored, _ := s.store.Get(context.Background(), testUID(t, s), sub.ID)
 	if stored.Status != store.StatusWritten || !strings.Contains(string(stored.Extraction), "Jane Doe") {
 		t.Fatalf("stored: status=%s extraction=%s", stored.Status, stored.Extraction)
 	}
@@ -257,7 +289,7 @@ func TestConfirmFailureKeepsDataAndRetries(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || resp["status"] != string(store.StatusFailedWrite) {
 		t.Fatalf("code=%d resp=%v", rec.Code, resp)
 	}
-	stored, _ := s.store.Get(context.Background(), bridgeUID(t, s), sub.ID)
+	stored, _ := s.store.Get(context.Background(), testUID(t, s), sub.ID)
 	if stored.Status != store.StatusFailedWrite {
 		t.Fatalf("status=%s, want failed_write", stored.Status)
 	}
@@ -294,7 +326,7 @@ func TestDiscardFreesSubmission(t *testing.T) {
 	}
 	// Soft delete: the row is retained but leaves the queue and frees the
 	// dedup hash for genuine resubmission.
-	kept, _ := s.store.Get(context.Background(), bridgeUID(t, s), sub.ID)
+	kept, _ := s.store.Get(context.Background(), testUID(t, s), sub.ID)
 	if kept == nil || kept.Status != store.StatusDiscarded {
 		t.Fatalf("discarded submission must be retained with status discarded, got %+v", kept)
 	}
@@ -324,8 +356,10 @@ func TestSubmitAndConfirmShareRateLimit(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	cfg := &config.Config{
-		RatePerMin: 1,
-		SheetTab:   "Leads",
+		RatePerMin:    1,
+		SheetTab:      "Leads",
+		SessionSecret: "test-secret",
+		AppBaseURL:    "http://localhost:8080",
 		Schema: config.Schema{
 			RequiredFields: []string{"contact", "need"},
 			Fields: []config.Field{
@@ -335,7 +369,7 @@ func TestSubmitAndConfirmShareRateLimit(t *testing.T) {
 			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
 		},
 	}
-	s := New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{})
+	s := New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, &mail.FakeMailer{})
 	h := handler(s)
 
 	rec, sub := postText(t, h, "Jane wants a logo, jane@x.com") // token 1
