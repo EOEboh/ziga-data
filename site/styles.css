@@ -1,0 +1,530 @@
+/* Ziga Data marketing site — the only stylesheet.
+
+   Tokens are carried over unchanged from the app's visual system
+   (web/src/styles.css, @theme block) so the brand stays continuous when a
+   visitor crosses to app.zigadata.com. Two deliberate deviations, both
+   explained in README.md: the base font size is 16px (the app's 14px is a
+   dense-tool choice, wrong for marketing prose), and the semantic amber/red
+   tokens are omitted since they are reserved for extraction confidence states
+   and must never be used decoratively. */
+
+:root {
+  --color-bg: #FAFAF8;
+  --color-surface: #FFFFFF;
+  --color-text: #1A1A18;
+  --color-text-2: #6B6B66;
+  --color-line: #E4E4DF;
+
+  --color-green: #1D9E75;
+  --color-green-deep: #0F6E56;
+  --color-green-tint: #E1F5EE;
+
+  --radius-ctl: 8px;
+  --radius-card: 12px;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+
+  --shadow-popover: 0 4px 16px rgba(26, 26, 24, 0.10);
+
+  /* Horizontal rhythm: one measure for the page, one for prose. */
+  --width-page: 1040px;
+  --width-prose: 680px;
+  --gutter: 24px;
+}
+
+/* --- reset ---------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+img,
+video {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+h1,
+h2,
+h3,
+p,
+ul {
+  margin: 0;
+}
+
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--color-green-deep);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--color-text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-green);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --- layout --------------------------------------------------------------- */
+
+.wrap {
+  width: 100%;
+  max-width: var(--width-page);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 10px 16px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-ctl);
+  z-index: 20;
+}
+
+.skip:focus {
+  left: 12px;
+  top: 12px;
+}
+
+/* --- nav (mirrors the app's TopBar: surface, 1px line, semibold wordmark) --- */
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-line);
+}
+
+.nav__inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 60px;
+}
+
+.wordmark {
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  text-decoration: none;
+  margin-right: auto;
+}
+
+.wordmark:hover {
+  color: var(--color-text);
+}
+
+/* --- buttons (mirror web/src/components/Button.tsx) ----------------------- */
+
+.btn {
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-ctl);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.btn:hover {
+  border-color: var(--color-text-2);
+  color: var(--color-text);
+}
+
+.btn--primary {
+  font-weight: 600;
+  border-color: var(--color-green);
+  background: var(--color-green);
+  color: #FFFFFF;
+}
+
+.btn--primary:hover {
+  background: var(--color-green-deep);
+  border-color: var(--color-green-deep);
+  color: #FFFFFF;
+}
+
+.btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-2);
+}
+
+.btn--ghost:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-color: transparent;
+}
+
+.btn--lg {
+  padding: 12px 24px;
+  font-size: 17px;
+}
+
+/* --- sections ------------------------------------------------------------- */
+
+.section {
+  padding: 72px 0;
+  border-top: 1px solid var(--color-line);
+}
+
+.section__title {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin-bottom: 32px;
+}
+
+.eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-2);
+  margin-bottom: 12px;
+}
+
+/* --- hero ----------------------------------------------------------------- */
+
+.hero {
+  padding: 88px 0 16px;
+  text-align: center;
+}
+
+.hero__title {
+  font-size: clamp(34px, 6vw, 52px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  max-width: 15ch;
+  margin: 0 auto 20px;
+}
+
+.hero__sub {
+  font-size: clamp(17px, 2.4vw, 19px);
+  color: var(--color-text-2);
+  max-width: 56ch;
+  margin: 0 auto 32px;
+}
+
+.hero__note {
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--color-text-2);
+}
+
+/* --- demo figure ---------------------------------------------------------- */
+
+.demo {
+  margin: 56px auto 0;
+  max-width: 880px;
+}
+
+.demo__frame {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+
+/* Placeholder shown until the owner drops in the real asset. See README.md. */
+.demo__slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 380px;
+  padding: 32px 24px;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+.demo__slot-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-text-2);
+}
+
+.demo__slot-title {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.demo__caption {
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--color-text-2);
+  text-align: center;
+}
+
+/* --- steps ---------------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  gap: 20px;
+}
+
+.grid--3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid--2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  padding: 24px;
+}
+
+.card__title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.card__body {
+  color: var(--color-text-2);
+}
+
+.step__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--color-green-tint);
+  color: var(--color-green-deep);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+/* --- who it's for --------------------------------------------------------- */
+
+.lede {
+  max-width: var(--width-prose);
+  font-size: 18px;
+  color: var(--color-text-2);
+}
+
+/* --- final CTA ------------------------------------------------------------ */
+
+.cta {
+  text-align: center;
+  padding: 88px 0;
+}
+
+.cta__line {
+  font-size: clamp(26px, 4.5vw, 34px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 24px;
+}
+
+/* --- footer --------------------------------------------------------------- */
+
+.footer {
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-line);
+  padding: 32px 0;
+  font-size: 14px;
+  color: var(--color-text-2);
+}
+
+.footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+}
+
+.footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin-right: auto;
+}
+
+.footer a {
+  color: var(--color-text-2);
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+/* --- legal pages ---------------------------------------------------------- */
+
+.legal {
+  max-width: var(--width-prose);
+  margin: 0 auto;
+  padding: 64px var(--gutter) 88px;
+}
+
+.legal h1 {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-bottom: 8px;
+}
+
+.legal__updated {
+  color: var(--color-text-2);
+  font-size: 14px;
+  margin-bottom: 40px;
+}
+
+.legal h2 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 40px 0 12px;
+}
+
+.legal h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 24px 0 8px;
+}
+
+.legal p {
+  margin-bottom: 16px;
+}
+
+.legal ul {
+  list-style: disc;
+  padding-left: 22px;
+  margin-bottom: 16px;
+}
+
+.legal li {
+  margin-bottom: 8px;
+}
+
+.legal code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.legal__callout {
+  background: var(--color-green-tint);
+  border: 1px solid var(--color-green);
+  border-radius: var(--radius-card);
+  padding: 20px 24px;
+  margin: 24px 0;
+}
+
+.legal__callout p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- responsive ----------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  .grid--3,
+  .grid--2 {
+    grid-template-columns: 1fr;
+  }
+
+  .section {
+    padding: 56px 0;
+  }
+
+  .hero {
+    padding: 56px 0 8px;
+  }
+
+  .cta {
+    padding: 64px 0;
+  }
+
+  .demo {
+    margin-top: 40px;
+  }
+
+  .demo__slot {
+    min-height: 260px;
+  }
+
+  .nav__inner {
+    gap: 8px;
+  }
+
+  .legal {
+    padding-top: 48px;
+  }
+}
+
+@media (max-width: 400px) {
+  /* Keep both nav actions on one line on small phones. */
+  .btn {
+    padding: 8px 12px;
+    font-size: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

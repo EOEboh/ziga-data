@@ -9,6 +9,13 @@ name: deploy
 on:
   push:
     branches: [main]
+    # site/ is the marketing site at zigadata.com, deployed independently by
+    # Cloudflare Pages (see site/README.md). It is outside the go:embed tree,
+    # so a copy edit there has no effect on the binary — don't run the suite or
+    # ship a release for one. A push touching both site/ and anything else
+    # still triggers normally, and workflow_dispatch can force a deploy.
+    paths-ignore:
+      - 'site/**'
   workflow_dispatch:
 
 # One deploy at a time; don't cancel an in-flight deploy (a half-applied binary
