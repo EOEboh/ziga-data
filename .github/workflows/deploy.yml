@@ -27,7 +27,6 @@ concurrency:
 env:
   # Must match PORT in /opt/ziga/ziga.env. Used by the post-deploy health check.
   HEALTH_URL: http://localhost:8080/healthz
-  NODE_VERSION: "22"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -41,9 +40,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # .nvmrc is the single source of truth for the Node version, shared with
+      # developer machines, rather than a number that lives only here. The
+      # stale-dist guard below diffs a fresh build against the committed one, so
+      # keeping CI and local builds on one pinned version removes a variable if
+      # that guard ever starts failing on a dist that looks correct.
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
