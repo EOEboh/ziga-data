@@ -42,8 +42,8 @@ PrivateTmp=true
 # a write transaction is in flight, its rollback journal (ziga.db-journal).
 # WAL is NOT enabled in the app (single-connection pool), so there are no
 # ziga.db-wal / ziga.db-shm sidecars to account for. Everything else the app
-# touches under /opt/ziga (ziga.env, config/schema.json, the service-account
-# JSON) is read-only, which strict mode permits.
+# touches under /opt/ziga (ziga.env, config/schema.json) is read-only, which
+# strict mode permits.
 ReadWritePaths=/opt/ziga
 
 # Logs go to stdout/stderr as JSON; journald captures and rotates them.

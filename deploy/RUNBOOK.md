@@ -19,7 +19,7 @@ Conventions used below:
 | `<HOST>` | server hostname or IP |
 | `<ADMIN>` | your sudo-capable admin login |
 | `<DEPLOY_USER>` | restricted CI deploy user created in §g (e.g. `zigadeploy`) |
-| `<PORT>` | app port; this runbook uses `8080` — change it everywhere if hookdrop already uses 8080 |
+| `<PORT>` | app bind port on the server; this runbook uses `8090` to avoid hookdrop. The browser-facing port stays `8080` via the tunnel (§f) |
 
 ---
 
@@ -46,48 +46,71 @@ scp config/schema.json <ADMIN>@<HOST>:/tmp/schema.json
 sudo install -o ziga -g ziga -m 640 /tmp/schema.json /opt/ziga/config/schema.json && rm /tmp/schema.json
 ```
 
-**Create `/opt/ziga/ziga.env`** (mode 600, owned by ziga). This is the complete
-set of variables the app reads. Fill in the real values:
+**Install `/opt/ziga/ziga.env`** (mode 600, owned by ziga). This is the complete
+set of variables the app reads.
+
+Do **not** hand-type it. `deploy/ziga.env` in your local clone is generated with
+the real values already filled in (it is gitignored, so it exists only on your
+workstation). Copy that file up:
 
 ```bash
-sudo -u ziga tee /opt/ziga/ziga.env >/dev/null <<'EOF'
-# --- Required ---
-OPENAI_API_KEY=<OPENAI_API_KEY>          # app hard-exits if empty
-
-# --- Google Sheets destination ---
-# BOTH of the next two must be set or the app runs in dry-run mode and rows are
-# never written to Sheets (they live only in memory and are lost on restart).
-GOOGLE_APPLICATION_CREDENTIALS=/opt/ziga/service-account.json
-SHEET_ID=<GOOGLE_SHEET_ID>
-SHEET_TAB=Leads
-
-# --- Model ---
-LLM_MODEL=gpt-5.4-nano
-
-# --- Server ---
-PORT=8080                                # must NOT collide with hookdrop's port
-DB_PATH=/opt/ziga/ziga.db
-SCHEMA_PATH=/opt/ziga/config/schema.json
-
-# --- Behaviour ---
-RATE_LIMIT_PER_MIN=10
-RETENTION_DAYS=14
-HEADER_ROW=true
-EOF
-
-sudo chmod 600 /opt/ziga/ziga.env
-sudo chown ziga:ziga /opt/ziga/ziga.env
+# from your workstation, in a clone of the repo:
+scp deploy/ziga.env <ADMIN>@<HOST>:/tmp/ziga.env
+# on the server:
+sudo install -o ziga -g ziga -m 600 /tmp/ziga.env /opt/ziga/ziga.env && rm /tmp/ziga.env
 ```
 
-**Install the Google service-account JSON** (mode 600, owned by ziga):
+Two properties of that file matter and are easy to break if you edit it by hand:
+
+- **The OAuth variables are named `GOOGLE_OAUTH_CLIENT_ID` /
+  `GOOGLE_OAUTH_CLIENT_SECRET`**, not `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+  With the wrong names the app still boots and reports healthy, but Google
+  sign-in, the Picker, and all per-user sheet writing are silently disabled.
+- **systemd's `EnvironmentFile=` does not strip inline `#` comments.**
+  `PORT=8090  # avoid hookdrop` sets the port to the entire string after the `=`
+  and the service fails to bind. Keep every comment on its own line, and do not
+  wrap values in quotes — systemd keeps the quotes literally.
+
+The variables that are server-specific (already set correctly in the generated
+file):
+
+| Variable | Staging value | Why |
+|---|---|---|
+| `PORT` | `8090` | avoids a collision with hookdrop; the tunnel maps 8080 → 8090 |
+| `DB_PATH` | `/opt/ziga/ziga.db` | the only writable path under `ProtectSystem=strict` |
+| `SCHEMA_PATH` | `/opt/ziga/config/schema.json` | not embedded in the binary |
+| `APP_BASE_URL` | `http://localhost:8080` | browser-facing origin through the tunnel |
+| `OAUTH_REDIRECT_URL` | `http://localhost:8080/api/auth/google/callback` | must match the console exactly |
+| `SMTP_*` | placeholders | see §a.1 — optional for this deploy |
+
+> **There is no service-account JSON in this deployment.** Each user connects
+> their own Google account and their own spreadsheet through OAuth, so
+> `SHEET_ID` and `GOOGLE_APPLICATION_CREDENTIALS` are not set at all. If you see
+> instructions to install `/opt/ziga/service-account.json`, they are from the
+> pre-multi-tenant version of this runbook.
+
+At this point `/opt/ziga` holds `config/schema.json` and `ziga.env`. The binary
+comes next.
+
+### a.1 Email is optional for this deploy
+
+The `SMTP_*` lines ship **commented out**, and must stay that way until you have
+real values. The log-instead-of-send fallback triggers only when `SMTP_HOST` is
+genuinely empty — setting it to a literal `<SMTP_HOST>` placeholder counts as
+"configured" and the app will try to reach a host by that name. Signup would
+still return 201, but the verification link would be neither emailed nor logged,
+leaving no way to verify the account short of reading the token out of SQLite.
+
+With the lines commented out, the app logs verification and password-reset links
+to the journal, so you can create and verify an account:
 
 ```bash
-scp service-account.json <ADMIN>@<HOST>:/tmp/service-account.json
-sudo install -o ziga -g ziga -m 600 /tmp/service-account.json /opt/ziga/service-account.json && rm /tmp/service-account.json
+sudo journalctl -u ziga -f | grep -i 'email not sent'
 ```
 
-At this point `/opt/ziga` holds `config/schema.json`, `ziga.env`, and
-`service-account.json`. The binary comes next.
+Copy the link out of that log line and open it in the browser. When you do pick a
+provider, note the mailer uses **STARTTLS on the submission port** (587). Port
+465 (implicit TLS) is not supported.
 
 ---
 
@@ -97,8 +120,8 @@ At this point `/opt/ziga` holds `config/schema.json`, `ziga.env`, and
 `web/dist` is committed so no Node build is required here):
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ziga ./cmd/server
-scp ziga <ADMIN>@<HOST>:/tmp/ziga
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/ziga-linux-amd64 ./cmd/server
+scp dist/ziga-linux-amd64 <ADMIN>@<HOST>:/tmp/ziga
 ```
 
 On the server, place the binary and install the systemd unit:
@@ -116,13 +139,41 @@ sudo systemctl enable --now ziga
 
 ```bash
 systemctl status ziga --no-pager
-journalctl -u ziga -n 50 --no-pager       # expect JSON logs; look for "listening"
-curl -fsS http://localhost:8080/healthz    # expect: ok
+journalctl -u ziga -n 50 --no-pager        # expect JSON logs
+curl -fsS http://localhost:8090/healthz    # expect: ok
 ```
 
-If `journalctl` shows `SHEET_ID / GOOGLE_APPLICATION_CREDENTIALS not set —
-running in dry-run mode`, revisit §a — one of those two vars is missing and rows
-will not reach the sheet.
+In the journal, the line that proves the multi-tenant configuration is live is:
+
+```
+{"level":"INFO","msg":"google oauth enabled","scopes":["openid", ... ,"drive.file"]}
+```
+
+If that line is **absent**, `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
+are missing or misnamed in `ziga.env`. The app will look perfectly healthy —
+`/healthz` returns `ok` — while sign-in 404s and nothing can reach a sheet. This
+is the single most likely failure of this deploy.
+
+> **Expected, not an error:** the journal also shows
+> `SHEET_ID / GOOGLE_APPLICATION_CREDENTIALS not set — running in dry-run mode`.
+> That warning is emitted unconditionally whenever those two dev-only variables
+> are absent, and it refers to the process-wide fallback writer, which is never
+> consulted once OAuth is configured. Under the multi-tenant model this warning
+> is *correct and expected*. Judge the deploy by the `google oauth enabled` line
+> instead.
+
+**Then verify the app end to end through the tunnel** (see §f for the tunnel
+itself), because `/healthz` does not exercise any of the interesting paths:
+
+```bash
+# with the tunnel open, from your workstation:
+curl -fsS http://localhost:8080/api/me | python3 -m json.tool
+```
+
+Expect `config.google_oauth: true` and non-empty `config.google_client_id` and
+`config.google_picker_api_key`. Those two values are served to the browser at
+runtime — the frontend does **not** bake them in at build time, so changing them
+only requires editing `ziga.env` and restarting, never a rebuild.
 
 ---
 
@@ -251,9 +302,19 @@ A clean `.tables` listing and a plausible row count means the pipeline is sound.
 Until DNS is flipped, reach the app by forwarding its local port over SSH:
 
 ```bash
-ssh -L 8080:localhost:8080 <DEPLOY_USER>@<HOST>
+ssh -L 8080:localhost:8090 <DEPLOY_USER>@<HOST>
 # leave that open, then browse:  http://localhost:8080
 ```
+
+Note the ports differ on purpose: the app binds **8090** on the server (avoiding
+hookdrop), while the tunnel presents it on **8080** locally. The browser-facing
+port must stay 8080 — `APP_BASE_URL` and the redirect URI registered on the
+Google OAuth client both say `http://localhost:8080`, and Google matches the
+redirect URI exactly, including the port. If you forward to a different local
+port, Google sign-in fails with `redirect_uri_mismatch`.
+
+`http://localhost` is exempt from Google's HTTPS requirement for redirect URIs,
+which is what makes this tunnel workable before DNS and TLS exist.
 
 Everything (UI + `/api/`) is served from the single app port. This path bypasses
 Nginx and TLS entirely, which is expected for staging.
@@ -315,10 +376,19 @@ and §g's rollback, which the workflow performs on a failed health check).
 
 ## h. Deliberately NOT done in this pass
 
-- **DNS flip** — `app.zigadata.com` is not yet pointed at this box. Happens once
-  auth ships, so staging is never publicly reachable unauthenticated.
-- **Auth** — no login/authorization yet. It is the next pass; the DNS flip waits
-  on it.
+- **DNS flip** — `app.zigadata.com` is not yet pointed at this box. Until it is,
+  the app is reachable only through the SSH tunnel (§f).
+- **Production OAuth origin** — the OAuth client's `https://app.zigadata.com`
+  redirect URI and JavaScript origin are registered but unused; staging runs
+  entirely on the `http://localhost:8080` pair. Switching over means updating
+  `APP_BASE_URL` and `OAUTH_REDIRECT_URL` in `ziga.env` and restarting — cookies
+  become `Secure` automatically because the app keys that off the `https://`
+  prefix of `APP_BASE_URL`.
+- **SMTP** — no provider configured; verification links are read from the
+  journal (§a.1).
+- **Nginx / TLS** — the server block in `deploy/nginx-ziga.conf` (upstream
+  `127.0.0.1:8090`) and the Cloudflare origin cert are for the DNS flip, not for
+  staging.
 - **Marketing site** — `zigadata.com` apex / marketing pages are a separate
   effort, unrelated to this app deployment.
 
@@ -334,7 +404,6 @@ detect drift.
 | `/opt/ziga/ziga` | ziga 755 | the application binary (replaced on each deploy) |
 | `/opt/ziga/ziga.prev` | ziga 755 | previous binary, kept for one-step rollback (§g / workflow) |
 | `/opt/ziga/ziga.env` | ziga 600 | all runtime configuration (secrets) |
-| `/opt/ziga/service-account.json` | ziga 600 | Google Sheets service-account key |
 | `/opt/ziga/config/schema.json` | ziga 640 | extraction schema, read from disk at boot |
 | `/opt/ziga/ziga.db` | ziga 600* | SQLite database — the only persistent state |
 | `/opt/ziga/ziga.db-journal` | ziga | transient rollback journal (present only mid-write) |

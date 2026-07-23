@@ -1,5 +1,7 @@
 # Secrets — never commit
-.env
+# *.env covers .env and the filled-in server template deploy/ziga.env.
+# .env.example does not match (it does not end in .env) and stays tracked.
+*.env
 service-account*.json
 
 # Local state
@@ -7,4 +9,5 @@ service-account*.json
 
 # Build output
 /ziga
+/dist/
 node_modules/
