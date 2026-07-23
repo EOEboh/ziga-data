@@ -149,18 +149,23 @@ In the journal, the line that proves the multi-tenant configuration is live is:
 {"level":"INFO","msg":"google oauth enabled","scopes":["openid", ... ,"drive.file"]}
 ```
 
-If that line is **absent**, `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
-are missing or misnamed in `ziga.env`. The app will look perfectly healthy —
-`/healthz` returns `ok` — while sign-in 404s and nothing can reach a sheet. This
-is the single most likely failure of this deploy.
+If that line is **absent**, the process did not stay up. Unless `ZIGA_DEV_MODE`
+is set, the app now refuses to boot when Google OAuth is not fully configured and
+exits with a message naming the missing variable, e.g.:
 
-> **Expected, not an error:** the journal also shows
-> `SHEET_ID / GOOGLE_APPLICATION_CREDENTIALS not set — running in dry-run mode`.
-> That warning is emitted unconditionally whenever those two dev-only variables
-> are absent, and it refers to the process-wide fallback writer, which is never
-> consulted once OAuth is configured. Under the multi-tenant model this warning
-> is *correct and expected*. Judge the deploy by the `google oauth enabled` line
-> instead.
+```
+{"level":"ERROR","msg":"config","err":"Google OAuth is required unless ZIGA_DEV_MODE=true; missing: GOOGLE_OAUTH_CLIENT_ID"}
+```
+
+So a misnamed or missing OAuth var is now a hard, loud boot failure
+(`systemctl status ziga` shows the unit failed) rather than a "healthy" process
+that silently drops every row. `ZIGA_DEV_MODE` must stay unset (or `false`) in
+this deployment — it exists only for local no-Google development.
+
+> **Not an error:** with OAuth configured you will **not** see the old
+> `running in dry-run mode` warning — it now fires only when the in-memory
+> fallback writer can actually be reached (dev mode with no OAuth). Its absence
+> here is correct. Judge the deploy by the `google oauth enabled` line.
 
 **Then verify the app end to end through the tunnel** (see §f for the tunnel
 itself), because `/healthz` does not exercise any of the interesting paths:

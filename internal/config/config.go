@@ -48,6 +48,12 @@ type Config struct {
 	SchemaPath string
 	Schema     Schema
 
+	// DevMode (ZIGA_DEV_MODE) relaxes the production boot guard. When false (the
+	// default) the app refuses to start unless Google OAuth is fully configured,
+	// so a misnamed OAuth var can never silently disable the production write
+	// path. When true the in-memory dry-run fallback is allowed.
+	DevMode bool
+
 	// Auth / multi-tenant configuration.
 	// SessionSecret keys the HMAC on CSRF tokens. If empty at boot an ephemeral
 	// one is generated (sessions/CSRF then don't survive a restart) — set it in
@@ -128,6 +134,32 @@ func Load() (*Config, error) {
 		GooglePickerAPIKey:      os.Getenv("GOOGLE_PICKER_API_KEY"),
 		GoogleProjectNumber:     os.Getenv("GOOGLE_PROJECT_NUMBER"),
 		TokenEncryptionKey:      os.Getenv("TOKEN_ENCRYPTION_KEY"),
+	}
+	switch v := strings.ToLower(os.Getenv("ZIGA_DEV_MODE")); v {
+	case "", "0", "false":
+		cfg.DevMode = false
+	case "1", "true":
+		cfg.DevMode = true
+	default:
+		return nil, fmt.Errorf("invalid ZIGA_DEV_MODE %q (want 1/true or 0/false)", v)
+	}
+	// Production boot guard: unless ZIGA_DEV_MODE=true, Google OAuth must be fully
+	// configured. This is what stops a typo'd OAuth var name from booting a
+	// "healthy" process that silently falls through to the dry-run writer.
+	if !cfg.DevMode {
+		var missing []string
+		if cfg.GoogleOAuthClientID == "" {
+			missing = append(missing, "GOOGLE_OAUTH_CLIENT_ID")
+		}
+		if cfg.GoogleOAuthClientSecret == "" {
+			missing = append(missing, "GOOGLE_OAUTH_CLIENT_SECRET")
+		}
+		if cfg.OAuthRedirectURL == "" {
+			missing = append(missing, "OAUTH_REDIRECT_URL")
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("Google OAuth is required unless ZIGA_DEV_MODE=true; missing: %s", strings.Join(missing, ", "))
+		}
 	}
 	// When Google OAuth is configured, the token-encryption key is mandatory —
 	// we must never store OAuth tokens in plaintext.

@@ -151,14 +151,22 @@ func main() {
 		header = cfg.Schema.Columns
 	}
 
+	// The process-wide writer is only ever consulted when Google OAuth is off
+	// (Server.writerFor uses per-user writers otherwise). So when OAuth is
+	// configured this is an unused placeholder, and the dry-run warning would be
+	// misleading — only emit it when the fallback can actually be reached.
 	var writer httpapi.RowWriter
-	if cfg.SheetID != "" && cfg.GoogleCredsPath != "" {
+	switch {
+	case cfg.SheetID != "" && cfg.GoogleCredsPath != "":
 		writer, err = sheets.NewWriter(context.Background(), cfg.GoogleCredsPath, cfg.SheetID, cfg.SheetTab, header)
 		if err != nil {
 			log.Error("sheets", "err", err)
 			os.Exit(1)
 		}
-	} else {
+	case cfg.OAuthConfigured():
+		// Never consulted; per-user writers handle every write.
+		writer = &dryRunWriter{log: log, header: header}
+	default:
 		log.Warn("SHEET_ID / GOOGLE_APPLICATION_CREDENTIALS not set — running in dry-run mode, rows will not be written")
 		writer = &dryRunWriter{log: log, header: header}
 	}
