@@ -5,8 +5,8 @@ runs hookdrop) to a running **staging** deployment of ziga-data. Follow it
 **top to bottom** — every step only depends on things created in earlier steps.
 
 **Scope of this pass:** staging only. DNS for `zigadata.com` is **not** flipped;
-the app is reached via an SSH tunnel (§f). What is deliberately left for later is
-listed in §h.
+the app is reached via an SSH tunnel (§f). Going live is §h; what is deliberately
+left for later is listed in §i.
 
 All commands run as a sudo-capable admin user unless a step says otherwise.
 Replace every `<PLACEHOLDER>` with a real value — this repo contains no real
@@ -379,27 +379,59 @@ and §g's rollback, which the workflow performs on a failed health check).
 
 ---
 
-## h. Deliberately NOT done in this pass
+## h. Going live: the DNS flip
+
+When `app.zigadata.com` is pointed at this box, the app moves off the localhost
+tunnel and onto its public HTTPS origin. Edit `/opt/ziga/ziga.env` and change
+exactly these two values:
+
+| Variable | Staging (now) | Production (after flip) |
+|----------|---------------|-------------------------|
+| `APP_BASE_URL` | `http://localhost:8080` | `https://app.zigadata.com` |
+| `OAUTH_REDIRECT_URL` | `http://localhost:8080/api/auth/google/callback` | `https://app.zigadata.com/api/auth/google/callback` |
+
+Everything else in `ziga.env` (`PORT=8090`, DB path, keys) stays as-is. Then:
+
+```bash
+sudo systemctl restart ziga
+```
+
+Checklist:
+
+- [ ] The Google OAuth client already has the **production redirect URI**
+      `https://app.zigadata.com/api/auth/google/callback` **and** the **JS origin**
+      `https://app.zigadata.com` registered. (Both are already added — verify, do
+      not assume.) `OAUTH_REDIRECT_URL` must match the registered URI character for
+      character, including scheme and no trailing slash.
+- [ ] Nginx (§d) and the Cloudflare origin cert (§c) are installed and serving
+      `app.zigadata.com` → `127.0.0.1:8090`.
+- [ ] After the restart, cookies are set `Secure` automatically — the app derives
+      that from the `https://` prefix of `APP_BASE_URL`, so no separate flag.
+- [ ] Verification / reset **email links now point at the public origin**, so SMTP
+      (§a.1) should be configured before or with the flip; otherwise links are only
+      in the journal.
+- [ ] The SSH tunnel (§f) is no longer the access path — browse `https://app.zigadata.com`.
+
+Verify: `curl -fsS https://app.zigadata.com/api/me` returns `config.google_oauth:
+true`, and a real Google sign-in completes without `redirect_uri_mismatch`.
+
+---
+
+## i. Deliberately NOT done in this pass
 
 - **DNS flip** — `app.zigadata.com` is not yet pointed at this box. Until it is,
-  the app is reachable only through the SSH tunnel (§f).
-- **Production OAuth origin** — the OAuth client's `https://app.zigadata.com`
-  redirect URI and JavaScript origin are registered but unused; staging runs
-  entirely on the `http://localhost:8080` pair. Switching over means updating
-  `APP_BASE_URL` and `OAUTH_REDIRECT_URL` in `ziga.env` and restarting — cookies
-  become `Secure` automatically because the app keys that off the `https://`
-  prefix of `APP_BASE_URL`.
+  the app is reachable only through the SSH tunnel (§f). The switch-over is §h.
 - **SMTP** — no provider configured; verification links are read from the
   journal (§a.1).
 - **Nginx / TLS** — the server block in `deploy/nginx-ziga.conf` (upstream
-  `127.0.0.1:8090`) and the Cloudflare origin cert are for the DNS flip, not for
-  staging.
+  `127.0.0.1:8090`) and the Cloudflare origin cert are for the DNS flip (§h), not
+  for staging.
 - **Marketing site** — `zigadata.com` apex / marketing pages are a separate
   effort, unrelated to this app deployment.
 
 ---
 
-## i. Server-state inventory (for drift audits)
+## j. Server-state inventory (for drift audits)
 
 Every file this setup places on the box, and why. Audit against this list to
 detect drift.
