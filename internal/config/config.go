@@ -72,6 +72,11 @@ type Config struct {
 	// GooglePickerAPIKey is a browser API key served to the frontend for the
 	// Google Picker (attach-existing-sheet flow).
 	GooglePickerAPIKey string
+	// GoogleProjectNumber is the numeric Google Cloud project number (the prefix
+	// of the OAuth client id). Served to the frontend and passed to the Picker's
+	// setAppId so a picked file's drive.file grant is attributed to this app —
+	// without it the server's stored token cannot read the picked spreadsheet.
+	GoogleProjectNumber string
 	// TokenEncryptionKey (base64, 32 bytes) encrypts OAuth tokens at rest.
 	// Required whenever Google OAuth is configured.
 	TokenEncryptionKey string
@@ -121,6 +126,7 @@ func Load() (*Config, error) {
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		OAuthRedirectURL:        envOr("OAUTH_REDIRECT_URL", envOr("APP_BASE_URL", "http://localhost:8080")+"/api/auth/google/callback"),
 		GooglePickerAPIKey:      os.Getenv("GOOGLE_PICKER_API_KEY"),
+		GoogleProjectNumber:     os.Getenv("GOOGLE_PROJECT_NUMBER"),
 		TokenEncryptionKey:      os.Getenv("TOKEN_ENCRYPTION_KEY"),
 	}
 	// When Google OAuth is configured, the token-encryption key is mandatory —

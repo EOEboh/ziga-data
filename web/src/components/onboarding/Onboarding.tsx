@@ -57,7 +57,7 @@ export function Onboarding({ api, me, reload }: { api: Api; me: Me; reload: () =
       if (isMock()) {
         id = "mock-existing-sheet";
       } else {
-        id = await openSheetPicker(me.config.google_client_id, me.config.google_picker_api_key);
+        id = await openSheetPicker(me.config.google_client_id, me.config.google_picker_api_key, me.config.google_project_number);
       }
       if (!id) return; // cancelled
       setBusy(true);

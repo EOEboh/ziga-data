@@ -248,6 +248,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			"google_oauth":          s.oauth != nil && s.oauth.Configured(),
 			"google_client_id":      s.googleClientID(),
 			"google_picker_api_key": s.cfg.GooglePickerAPIKey,
+			"google_project_number": s.cfg.GoogleProjectNumber,
 		},
 	}
 	uid, ok := s.sessionUser(r)

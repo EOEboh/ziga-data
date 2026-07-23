@@ -9,6 +9,7 @@ import (
 	"github.com/EOEboh/ziga-data/internal/sheets"
 	"github.com/EOEboh/ziga-data/internal/store"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/googleapi"
 )
 
 // Typed resolver errors, mapped to user-facing responses by the handlers.
@@ -163,7 +164,15 @@ func (s *Server) handleSheetsAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	tab, err := sheets.FirstSheetTitle(r.Context(), ts, req.SpreadsheetID, s.sheetsOpts...)
 	if err != nil {
-		s.log.Error("attach spreadsheet", "err", err)
+		// Surface the real Google error in the log while keeping the user message
+		// friendly. 404 here means the server's stored token genuinely cannot see
+		// the picked file (the symptom of a missing Picker setAppId); 403 is a
+		// different permission problem.
+		if gerr := (*googleapi.Error)(nil); errors.As(err, &gerr) {
+			s.log.Error("attach spreadsheet", "code", gerr.Code, "gmsg", gerr.Message, "err", err)
+		} else {
+			s.log.Error("attach spreadsheet", "err", err)
+		}
 		httpError(w, http.StatusBadGateway, "could not open that spreadsheet")
 		return
 	}
