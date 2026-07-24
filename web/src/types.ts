@@ -106,6 +106,7 @@ export interface Me {
     google_oauth: boolean;
     google_client_id: string;
     google_picker_api_key: string;
+    google_project_number: string;
   };
 }
 

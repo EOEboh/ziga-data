@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,10 @@ func setup(t *testing.T) string {
 	}
 	t.Setenv("SCHEMA_PATH", schemaPath)
 	t.Setenv("OPENAI_API_KEY", "") // isolate from the outer environment
+	// Config tests are not production: default to dev mode so Load() doesn't trip
+	// the OAuth-required boot guard. The guard itself is covered by
+	// TestOAuthRequiredUnlessDevMode, which sets ZIGA_DEV_MODE explicitly.
+	t.Setenv("ZIGA_DEV_MODE", "true")
 	t.Chdir(dir)
 	return dir
 }
@@ -98,6 +103,56 @@ func TestHeaderRow(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("invalid HEADER_ROW must be rejected")
 	}
+}
+
+func TestOAuthRequiredUnlessDevMode(t *testing.T) {
+	// A full OAuth set, so the guard is satisfied when dev mode is off.
+	setOAuth := func(t *testing.T) {
+		t.Setenv("GOOGLE_OAUTH_CLIENT_ID", "cid")
+		t.Setenv("GOOGLE_OAUTH_CLIENT_SECRET", "secret")
+		t.Setenv("OAUTH_REDIRECT_URL", "http://localhost:8080/api/auth/google/callback")
+		t.Setenv("TOKEN_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=") // 32 bytes
+	}
+
+	t.Run("prod without oauth is rejected and names the vars", func(t *testing.T) {
+		setup(t)
+		t.Setenv("OPENAI_API_KEY", "sk")
+		t.Setenv("ZIGA_DEV_MODE", "false")
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load must fail when OAuth is unconfigured and dev mode is off")
+		}
+		if !strings.Contains(err.Error(), "GOOGLE_OAUTH_CLIENT_ID") {
+			t.Fatalf("error must name the missing var, got: %v", err)
+		}
+	})
+
+	t.Run("prod with full oauth boots", func(t *testing.T) {
+		setup(t)
+		t.Setenv("OPENAI_API_KEY", "sk")
+		t.Setenv("ZIGA_DEV_MODE", "false")
+		setOAuth(t)
+		if _, err := Load(); err != nil {
+			t.Fatalf("Load must succeed with full OAuth in prod mode: %v", err)
+		}
+	})
+
+	t.Run("dev mode allows missing oauth", func(t *testing.T) {
+		setup(t) // sets ZIGA_DEV_MODE=true
+		t.Setenv("OPENAI_API_KEY", "sk")
+		if _, err := Load(); err != nil {
+			t.Fatalf("Load must succeed in dev mode without OAuth: %v", err)
+		}
+	})
+
+	t.Run("invalid dev mode value is rejected", func(t *testing.T) {
+		setup(t)
+		t.Setenv("OPENAI_API_KEY", "sk")
+		t.Setenv("ZIGA_DEV_MODE", "banana")
+		if _, err := Load(); err == nil {
+			t.Fatal("invalid ZIGA_DEV_MODE must be rejected")
+		}
+	})
 }
 
 func TestRetentionDays(t *testing.T) {

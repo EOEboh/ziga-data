@@ -50,8 +50,10 @@ function loadPickerApi(): Promise<void> {
 
 // openSheetPicker loads the libraries, obtains a token, shows the Picker limited
 // to spreadsheets, and resolves with the chosen spreadsheet id (or null if the
-// user cancels).
-export async function openSheetPicker(clientId: string, apiKey: string): Promise<string | null> {
+// user cancels). appId is the Google Cloud project number: setAppId attributes
+// the picked file's drive.file grant to this app, so the server's stored token
+// can read the chosen spreadsheet afterwards (without it the server gets 404).
+export async function openSheetPicker(clientId: string, apiKey: string, appId: string): Promise<string | null> {
   await Promise.all([
     loadScript("https://accounts.google.com/gsi/client"),
     loadScript("https://apis.google.com/js/api.js"),
@@ -65,6 +67,7 @@ export async function openSheetPicker(clientId: string, apiKey: string): Promise
       const view = new g.picker.DocsView(g.picker.ViewId.SPREADSHEETS).setMode(g.picker.DocsViewMode.LIST);
       const picker = new g.picker.PickerBuilder()
         .addView(view)
+        .setAppId(appId)
         .setOAuthToken(token)
         .setDeveloperKey(apiKey)
         .setCallback((data: any) => {

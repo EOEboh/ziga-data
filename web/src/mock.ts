@@ -151,7 +151,7 @@ export class MockApi implements Api {
       user: this.authed ? { id: 1, email: "you@example.com", email_verified: true } : null,
       google_connected: this.googleConnected,
       sheet_connected: this.sheetConnected,
-      config: { google_oauth: true, google_client_id: "mock-client", google_picker_api_key: "mock-key" },
+      config: { google_oauth: true, google_client_id: "mock-client", google_picker_api_key: "mock-key", google_project_number: "575697153359" },
     };
   }
   async signup(): Promise<void> {

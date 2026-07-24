@@ -25,8 +25,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Must match PORT in /opt/ziga/ziga.env. Used by the post-deploy health check.
-  HEALTH_URL: http://localhost:8080/healthz
+  # Must match PORT in /opt/ziga/ziga.env. Used by the post-deploy health check,
+  # which runs on the server, so this is the app's bind port (8090) — not the
+  # 8080 the SSH tunnel presents on a workstation.
+  HEALTH_URL: http://localhost:8090/healthz
 
 jobs:
   # ---------------------------------------------------------------------------
