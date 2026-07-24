@@ -1,0 +1,32 @@
+# ziga-backup.timer — nightly schedule for ziga-backup.service.
+#
+# WHAT:  Fires ziga-backup.service once a night at a low-traffic hour, catching
+#        up on the next boot if the box was down when it was due.
+# WHERE: Install to /etc/systemd/system/ziga-backup.timer on the server, then:
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now ziga-backup.timer
+#          systemctl list-timers ziga-backup.timer    # confirm the next elapse
+#        See deploy/RUNBOOK.md §e.
+
+[Unit]
+Description=Nightly ziga-data SQLite backup to R2
+Documentation=https://github.com/EOEboh/ziga-data
+
+[Timer]
+Unit=ziga-backup.service
+
+# 02:30 UTC == 03:30 in the server's UTC+1 local time — a low-traffic hour.
+# Deliberately off the top of the hour so it does not start alongside hookdrop's
+# backup on the same box. UTC is pinned so the schedule does not shift with the
+# system timezone.
+OnCalendar=*-*-* 02:30:00 UTC
+
+# Jitter so the two co-hosted backups never contend for the same upload window.
+RandomizedDelaySeconds=300
+
+# Catch up on a missed run (box powered off / rebooting at 02:30) rather than
+# silently skipping a night.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

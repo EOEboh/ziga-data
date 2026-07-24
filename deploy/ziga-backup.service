@@ -1,0 +1,54 @@
+# ziga-backup.service — one-shot nightly backup of the ziga database to R2.
+#
+# WHAT:  Runs /opt/ziga/backup-ziga.sh once, as the `deploy` user, logging to
+#        journald under the `ziga-backup` identifier. Triggered by
+#        ziga-backup.timer — this unit is not enabled on its own.
+# WHERE: Install to /etc/systemd/system/ziga-backup.service on the server, then:
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now ziga-backup.timer
+#        See deploy/RUNBOOK.md §e for install + the mandatory restore test.
+
+[Unit]
+Description=ziga-data nightly SQLite backup to R2
+Documentation=https://github.com/EOEboh/ziga-data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Runs as deploy, not ziga: only deploy can read the rclone config that holds
+# the R2 credentials. deploy reads /opt/ziga/ziga.db via the ziga group
+# (RUNBOOK §e step 1).
+#
+# No Group= is set on purpose: systemd then uses the deploy user's primary group
+# and initialises its supplementary groups from the user database — which is how
+# the `ziga` group membership that grants read access to the database takes
+# effect. Pinning Group= here would also fail outright if no `deploy` group
+# exists.
+User=deploy
+
+ExecStart=/opt/ziga/backup-ziga.sh
+
+# All configuration is defaulted in the script itself; override with
+# `sudo systemctl edit ziga-backup.service` and an Environment= line if a path,
+# bucket, or retention window ever changes.
+
+# --- Hardening ---
+# Deliberately lighter than ziga.service: this job needs to read the deploy
+# user's home and reach the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# ProtectHome is NOT set on purpose — the script must read
+# /home/deploy/.config/rclone/rclone.conf. Setting it would break every run.
+
+# The script writes its snapshot to a temp file (PrivateTmp) and cleans up after
+# itself; nothing outside /tmp is written.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ziga-backup
+
+# No [Install] section: the timer pulls this unit in. Enabling this unit
+# directly would run the backup at every boot instead of on schedule.
