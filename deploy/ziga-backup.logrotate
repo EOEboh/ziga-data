@@ -1,0 +1,21 @@
+# ziga-backup.logrotate — rotation for the nightly backup log.
+#
+# WHAT:  Keeps /var/log/ziga-backup.log bounded. The backup runs `rclone` at
+#        --log-level INFO every night, so the file grows steadily and nothing
+#        else rotates it.
+# WHERE: Install to /etc/logrotate.d/ziga-backup (root:root, chmod 644). The
+#        system logrotate.timer picks it up; no extra scheduling is needed.
+#        See deploy/RUNBOOK.md §e.
+#
+# NOTE:  hookdrop has no equivalent — /opt/hookdrop/backup.log grows unbounded.
+#        That is a gap on hookdrop's side, not a difference to copy.
+
+/var/log/ziga-backup.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 640 deploy deploy
+}

@@ -1,8 +1,14 @@
 # ziga-backup.service — one-shot nightly backup of the ziga database to R2.
 #
-# WHAT:  Runs /opt/ziga/backup-ziga.sh once, as the `deploy` user, logging to
-#        journald under the `ziga-backup` identifier. Triggered by
-#        ziga-backup.timer — this unit is not enabled on its own.
+# WHAT:  Runs /opt/ziga/backup.sh once, as the `deploy` user, logging to journald
+#        under the `ziga-backup` identifier (the script additionally appends to
+#        /var/log/ziga-backup.log). Triggered by ziga-backup.timer — this unit is
+#        not enabled on its own.
+#
+# Mirrors hookdrop-backup.service on the same box, which is the reference setup.
+# The differences are deliberate: hookdrop needs Wants/After=docker.service
+# because it is containerised, whereas ziga runs from a plain binary and only
+# needs the network; and hookdrop's unit carries no hardening at all.
 # WHERE: Install to /etc/systemd/system/ziga-backup.service on the server, then:
 #          sudo systemctl daemon-reload
 #          sudo systemctl enable --now ziga-backup.timer
@@ -22,13 +28,12 @@ Type=oneshot
 # (RUNBOOK §e step 1).
 #
 # No Group= is set on purpose: systemd then uses the deploy user's primary group
-# and initialises its supplementary groups from the user database — which is how
-# the `ziga` group membership that grants read access to the database takes
-# effect. Pinning Group= here would also fail outright if no `deploy` group
-# exists.
+# (deploy, gid 1000) and initialises its supplementary groups from the user
+# database — which is how the `ziga` group membership that grants read access to
+# the database takes effect. hookdrop-backup.service likewise sets only User=.
 User=deploy
 
-ExecStart=/opt/ziga/backup-ziga.sh
+ExecStart=/opt/ziga/backup.sh
 
 # All configuration is defaulted in the script itself; override with
 # `sudo systemctl edit ziga-backup.service` and an Environment= line if a path,
@@ -36,15 +41,22 @@ ExecStart=/opt/ziga/backup-ziga.sh
 
 # --- Hardening ---
 # Deliberately lighter than ziga.service: this job needs to read the deploy
-# user's home and reach the network.
+# user's home and reach the network. (hookdrop-backup.service has none of this.)
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=full
 # ProtectHome is NOT set on purpose — the script must read
 # /home/deploy/.config/rclone/rclone.conf. Setting it would break every run.
+#
+# PrivateTmp is load-bearing, not just hardening: the script writes its snapshot
+# to a predictable /tmp/ziga_<stamp>.db path (so `rclone copy` derives the right
+# object name, matching hookdrop). That is only safe because this gives the unit
+# a private /tmp. Removing it without also switching the script back to mktemp
+# would open a symlink-attack surface.
+PrivateTmp=true
 
-# The script writes its snapshot to a temp file (PrivateTmp) and cleans up after
-# itself; nothing outside /tmp is written.
+# The snapshot lives in the private /tmp and is removed by the script's own EXIT
+# trap. The only other path written is /var/log/ziga-backup.log, which
+# ProtectSystem=full leaves writable.
 
 StandardOutput=journal
 StandardError=journal

@@ -230,19 +230,37 @@ sudo systemctl reload nginx
 ## e. Nightly backup + **mandatory restore test**
 
 A `sqlite3 .backup` snapshot is gzipped and uploaded to **R2** via rclone nightly,
-driven by a **systemd timer** — the same mechanism hookdrop uses on this box.
+driven by a **systemd timer**. This mirrors hookdrop's setup on the same box
+(`/opt/hookdrop/backup.sh` + `hookdrop-backup.service`/`.timer`) so that debugging
+one teaches you the other — same script location and filename, same object-naming
+style, same rclone flags, same `tail`-able log file.
 
-> **Separate buckets:** hookdrop backs up to `r2:hookdrop-backups/` and ziga to
-> `r2:ziga-backups/`. They share the rclone config and nothing else — neither
-> app's retention prune can touch the other's objects.
+Where ziga deliberately differs, and why — do not "fix" these:
+
+| | hookdrop | ziga |
+|---|---|---|
+| Snapshot | `docker exec hookdrop sqlite3 …` | direct `sqlite3` (ziga is not containerised) |
+| Bucket / token | `r2:hookdrop-backups/` | `r2ziga:ziga-backups/`, its own scoped token |
+| Retention | 7 days | 30 days |
+| Upload | raw `.db` (~15 MB/night) | gzipped `.db.gz` |
+| Schedule | 03:00 | 02:30 (offset to avoid contending for the upload) |
+| Script | `set -e`, no trap, no dry-run | `set -euo pipefail`, exit-preserving trap, `BACKUP_DRY_RUN` |
+| Log rotation | none (log grows unbounded) | `/etc/logrotate.d/ziga-backup` |
+
+> **Separate buckets, separate credentials:** hookdrop's R2 token is scoped to
+> `hookdrop-backups` only. ziga gets its own bucket and its own scoped token, so
+> neither app's prune can touch the other's objects and a leak of one credential
+> cannot reach the other's backups.
 
 > **Which "deploy"?** The backup runs as the box's existing `deploy` user (home
-> `/home/deploy`), because that account owns the rclone config holding the R2
-> credentials. That is **not** `<DEPLOY_USER>`, the restricted CI account in §g.
+> `/home/deploy`), because that account owns the rclone config. That is **not**
+> `<DEPLOY_USER>`, the restricted CI account in §g. Note that `deploy` does
+> **not** have passwordless sudo here — every `sudo` below will prompt.
 
 **1. Give `deploy` read access to the database.** The app runs as `ziga` and
-`/opt/ziga/ziga.db` is mode 600, so the job cannot read it out of the box. Add
-`deploy` to the `ziga` group and open group-read:
+`/opt/ziga` is not readable by `deploy` today (verify: `sudo -u deploy ls
+/opt/ziga` currently fails). Add `deploy` to the `ziga` group and open
+group-read:
 
 ```bash
 sudo usermod -aG ziga deploy
@@ -260,53 +278,62 @@ app's systemd unit writes it as `ziga`.
 > and directory. Widen to `sudo chmod 770 /opt/ziga` and
 > `sudo chmod 660 /opt/ziga/ziga.db`.
 
-**2. Confirm rclone and the `r2:` remote.** hookdrop already set both up; ziga
-reuses the remote and adds only its own bucket:
+**2. Create the bucket and a scoped token — in the Cloudflare dashboard.** This
+cannot be done from the box: the existing `r2:` token is scoped to
+`hookdrop-backups`, so it cannot list or create anything else (`rclone lsd r2:`
+returns `403 AccessDenied`, and so does any bucket outside its scope).
+
+1. R2 → **Create bucket** → name it `ziga-backups`, same location/class as
+   `hookdrop-backups`.
+2. R2 → **Manage R2 API Tokens** → **Create API token**:
+   - Permission: **Object Read & Write**
+   - Scope: **Apply to specific buckets only** → `ziga-backups`
+3. Note the Access Key ID, Secret Access Key, and the S3 endpoint. Do **not**
+   edit or re-scope hookdrop's existing token — leaving it untouched is the
+   point.
+
+**3. Add the `r2ziga:` remote.** It goes in the same config file as `r2:`, as the
+`deploy` user:
 
 ```bash
-rclone version                                   # confirm rclone is installed
-sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
-    listremotes                                  # expect: r2:
+sudo -u deploy rclone config
+#   n) New remote
+#   name> r2ziga
+#   Storage> s3        →   provider> Cloudflare
+#   access_key_id / secret_access_key / endpoint  →  from step 2
+#   Edit advanced config> y  →  set  no_check_bucket> true   (matches [r2])
 ```
 
-The credentials stay in that file. This repo references the config **path** only
+Verify — an empty listing that exits 0, **not** a 403:
+
+```bash
+sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
+    lsf r2ziga:ziga-backups/ ; echo "rc=$?"      # expect: no output, rc=0
+```
+
+The credentials live only in that file. This repo references the config **path**
 and never its contents — do not copy it into `/opt/ziga` or into git.
 
-**3. Create the `ziga-backups` bucket — one time, before the first run.** The
-backup script passes `--s3-no-check-bucket` (matching hookdrop), which tells
-rclone *not* to create a missing bucket. That saves a request per run, but it
-means the first upload fails with `NoSuchBucket` unless the bucket already
-exists. Create it once, either in the Cloudflare dashboard (R2 → Create bucket →
-`ziga-backups`) or from the box:
+**4. Create the log file and install rotation.** The script appends to
+`/var/log/ziga-backup.log` in addition to journald, the way hookdrop uses
+`/opt/hookdrop/backup.log`:
 
 ```bash
-# note: no --s3-no-check-bucket here — that flag would suppress the create
-sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
-    mkdir r2:ziga-backups
-
-sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
-    lsd r2:                                      # expect: ziga-backups + hookdrop-backups
+sudo install -o deploy -g deploy -m 640 /dev/null /var/log/ziga-backup.log
+sudo install -o root -g root -m 644 deploy/ziga-backup.logrotate /etc/logrotate.d/ziga-backup
+sudo logrotate --debug /etc/logrotate.d/ziga-backup    # expect: no errors
 ```
 
-Use the same Cloudflare account the `r2:` remote is configured against — if the
-bucket is not visible in the dashboard afterwards, the remote is pointed at a
-different account.
-
-> **Retention is enforced by the script, not by R2.** Do not add an R2 lifecycle
-> rule to this bucket; the nightly `rclone delete --min-age 30d` already prunes
-> it, and two independent expiry mechanisms make the real retention window hard
-> to reason about.
-
-**4. Install the script:**
+**5. Install the script:**
 
 ```bash
-sudo install -o deploy -g deploy -m 750 deploy/backup-ziga.sh /opt/ziga/backup-ziga.sh
+sudo install -o deploy -g deploy -m 750 deploy/backup.sh /opt/ziga/backup.sh
 ```
 
-**5. Install and enable the timer.** No editing required — the bucket, config
-path, retention window, and database path are defaulted in the script's header
-block; override any of them with `sudo systemctl edit ziga-backup.service` if
-they ever change.
+**6. Install and enable the timer.** No editing required — the bucket, config
+path, retention window, database path, and log file are all defaulted in the
+script's header block; override any of them with `sudo systemctl edit
+ziga-backup.service` and an `Environment=` line if they ever change.
 
 ```bash
 sudo install -o root -g root -m 644 deploy/ziga-backup.service /etc/systemd/system/ziga-backup.service
@@ -319,53 +346,57 @@ systemctl list-timers ziga-backup.timer    # expect: a NEXT elapse ~02:30 UTC
 Enable the **timer**, not the service — enabling the service directly would run
 a backup at every boot instead of on schedule.
 
-**6. Run it once manually and confirm the object landed.** Dry run first (it
+**7. Run it once manually and confirm the object landed.** Dry run first (it
 still snapshots and gzips locally, so it proves everything short of the upload):
 
 ```bash
-sudo -u deploy env BACKUP_DRY_RUN=1 /opt/ziga/backup-ziga.sh
+sudo -u deploy env BACKUP_DRY_RUN=1 /opt/ziga/backup.sh
 echo "rc=$?"                               # expect: rc=0
 
 sudo systemctl start ziga-backup.service   # the real thing, through systemd
 sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
-    ls r2:ziga-backups/                    # expect a ziga-YYYYMMDD-HHMMSS.db.gz
+    lsf r2ziga:ziga-backups/               # expect a ziga_YYYYMMDD_HHMMSS.db.gz
 ```
 
-**7. RESTORE TEST — a backup is NOT done until a restore has been done.**
+**8. RESTORE TEST — a backup is NOT done until a restore has been done.**
 Download the object you just uploaded, decompress it, open it with sqlite3, and
 count rows. If this fails, the backup is worthless — fix it before moving on.
 
 ```bash
 cd /tmp
 sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
-    copy r2:ziga-backups/ziga-<STAMP>.db.gz /tmp/
-gunzip -k /tmp/ziga-<STAMP>.db.gz          # -> /tmp/ziga-<STAMP>.db
-sqlite3 /tmp/ziga-<STAMP>.db '.tables'
-sqlite3 /tmp/ziga-<STAMP>.db 'SELECT count(*) FROM submissions;'   # any real table
-rm -f /tmp/ziga-<STAMP>.db /tmp/ziga-<STAMP>.db.gz
+    copy r2ziga:ziga-backups/ziga_<STAMP>.db.gz /tmp/
+gunzip -k /tmp/ziga_<STAMP>.db.gz          # -> /tmp/ziga_<STAMP>.db
+sqlite3 /tmp/ziga_<STAMP>.db '.tables'
+sqlite3 /tmp/ziga_<STAMP>.db 'PRAGMA integrity_check;'             # expect: ok
+sqlite3 /tmp/ziga_<STAMP>.db 'SELECT count(*) FROM submissions;'   # any real table
+rm -f /tmp/ziga_<STAMP>.db /tmp/ziga_<STAMP>.db.gz
 ```
 
-A clean `.tables` listing and a plausible row count means the pipeline is sound.
-Re-run this test after any change to the script, the bucket, or the rclone
-config — it is the only thing that proves the backups are restorable.
+A clean `.tables` listing, `integrity_check` = `ok`, and a plausible row count
+mean the pipeline is sound. Re-run this test after any change to the script, the
+bucket, the token, or the rclone config — it is the only thing that proves the
+backups are restorable.
 
-**8. Check that it ran.** The timer logs to journald under `ziga-backup`:
+**9. Check that it ran.** Two views, matching the two ways hookdrop is debugged:
 
 ```bash
 systemctl list-timers ziga-backup.timer          # next + last elapse
 systemctl status ziga-backup.service             # last run's result
 journalctl -u ziga-backup.service --since '2 days ago'
+tail -f /var/log/ziga-backup.log                 # as with hookdrop's backup.log
 ```
 
-A healthy run ends with `backup complete: ziga-<STAMP>.db.gz` and
-`Result: success`. A failure shows `Result: exit-code` — the script preserves
-the real exit status through its cleanup trap specifically so that a failed
-upload or an unreadable config surfaces here instead of looking like a success.
+A healthy run ends with `backup complete: ziga_<STAMP>.db.gz` and
+`Result: success`. A failure shows `Result: exit-code` — the script preserves the
+real exit status through its cleanup trap specifically so that a failed upload or
+an unreadable config surfaces here instead of looking like a success.
 
-> **Logs:** the app logs JSON to stdout, captured by journald — there is **no**
-> log file and no logrotate config. journald rotates on its own; cap disk use if
-> desired via `SystemMaxUse=` in `/etc/systemd/journald.conf`, or vacuum with
-> `sudo journalctl --vacuum-time=30d`.
+> **Logs:** the app itself logs JSON to stdout, captured by journald — there is
+> **no** app log file. journald rotates on its own; cap disk use if desired via
+> `SystemMaxUse=` in `/etc/systemd/journald.conf`, or vacuum with
+> `sudo journalctl --vacuum-time=30d`. The backup's own
+> `/var/log/ziga-backup.log` is rotated by the logrotate snippet from step 4.
 
 ---
 
@@ -511,19 +542,26 @@ detect drift.
 | `/opt/ziga/config/schema.json` | ziga 640 | extraction schema, read from disk at boot |
 | `/opt/ziga/ziga.db` | ziga 640* | SQLite database — the only persistent state; group-readable so the backup can snapshot it (§e) |
 | `/opt/ziga/ziga.db-journal` | ziga | transient rollback journal (present only mid-write) |
-| `/opt/ziga/backup-ziga.sh` | deploy 750 | nightly backup script, run by the timer as `deploy` |
+| `/opt/ziga/backup.sh` | deploy 750 | nightly backup script (same name/position as `/opt/hookdrop/backup.sh`) |
 | `/etc/systemd/system/ziga.service` | root 644 | systemd unit |
 | `/etc/nginx/sites-available/ziga.conf` | root 644 | Nginx server block (+ symlink in sites-enabled) |
 | `/etc/systemd/system/ziga-backup.service` | root 644 | one-shot backup job (triggered by the timer, not enabled itself) |
 | `/etc/systemd/system/ziga-backup.timer` | root 644 | nightly backup schedule (02:30 UTC, `Persistent=true`) |
+| `/var/log/ziga-backup.log` | deploy 640 | backup log, mirroring hookdrop's `/opt/hookdrop/backup.log` |
+| `/etc/logrotate.d/ziga-backup` | root 644 | rotation for the above (hookdrop has no equivalent) |
 | `/etc/ssl/cloudflare/zigadata.pem` | root 644 | Cloudflare origin certificate |
 | `/etc/ssl/cloudflare/zigadata.key` | root 600 | Cloudflare origin private key |
 | `/etc/sudoers.d/ziga-deploy` | root 440 | scoped sudo for the CI deploy user |
 | `/home/<DEPLOY_USER>/.ssh/authorized_keys` | deploy 600 | CI deploy public key |
 
 Depended on but **not** placed by this setup: `/home/deploy/.config/rclone/rclone.conf`
-(deploy 600) — hookdrop's pre-existing rclone/R2 credentials, which §e reuses. If it
-moves, the nightly backup fails.
+(deploy 600) — hookdrop's pre-existing rclone config. §e adds a second remote,
+`[r2ziga]`, to it and leaves hookdrop's `[r2]` untouched. If the file moves, both
+apps' backups fail.
+
+Owned by hookdrop, listed only so a drift audit does not mistake them for ziga's:
+`/opt/hookdrop/backup.sh`, `/etc/systemd/system/hookdrop-backup.{service,timer}`,
+`/opt/hookdrop/backup.log`.
 
 \* the app creates `ziga.db` on first boot with the process umask; it is written
 only by the ziga user inside `/opt/ziga` (the sole `ReadWritePaths` in the unit).

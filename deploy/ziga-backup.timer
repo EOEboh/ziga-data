@@ -15,13 +15,13 @@ Documentation=https://github.com/EOEboh/ziga-data
 [Timer]
 Unit=ziga-backup.service
 
-# 02:30 UTC == 03:30 in the server's UTC+1 local time — a low-traffic hour.
-# Deliberately off the top of the hour so it does not start alongside hookdrop's
-# backup on the same box. UTC is pinned so the schedule does not shift with the
-# system timezone.
+# hookdrop-backup.timer runs at 03:00 and uploads ~15 MB uncompressed. ziga runs
+# 30 minutes earlier so the two never contend for the same upload window — the
+# offset is deliberate, not drift. UTC is pinned so the schedule cannot shift
+# with the system timezone (hookdrop's is unpinned; the box is UTC either way).
 OnCalendar=*-*-* 02:30:00 UTC
 
-# Jitter so the two co-hosted backups never contend for the same upload window.
+# Extra jitter on top of the offset.
 RandomizedDelaySeconds=300
 
 # Catch up on a missed run (box powered off / rebooting at 02:30) rather than
