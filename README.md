@@ -256,9 +256,13 @@ The `deploy/` directory contains:
   caps, `ProtectSystem=strict`).
 - **`nginx-ziga.conf`** — TLS-terminating reverse-proxy server block with an
   `/api/` rate limit and a 6 MB body ceiling (above the app's 5 MB image limit).
-- **`backup-ziga.sh`** + **`backup-ziga.cron`** — nightly WAL/journal-safe SQLite
-  backup to R2 via rclone, with a 30-day retention prune and a `BACKUP_DRY_RUN`
-  mode. The runbook's backup step includes a **mandatory restore test**.
+- **`backup.sh`** + **`ziga-backup.service`**/**`ziga-backup.timer`** (+
+  **`ziga-backup.logrotate`**) — nightly journal-safe SQLite backup to its own R2
+  bucket via rclone, on a systemd timer, with a 30-day retention prune and a
+  `BACKUP_DRY_RUN` mode. Deliberately mirrors the co-hosted hookdrop app's backup
+  layout — same script name and location, object naming, rclone flags, and log
+  file — so the two are debugged the same way. The runbook's backup step includes
+  a **mandatory restore test**.
 
 Pushes to `main` build and deploy automatically via
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (atomic binary
