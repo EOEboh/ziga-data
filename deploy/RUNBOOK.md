@@ -261,7 +261,7 @@ app's systemd unit writes it as `ziga`.
 > `sudo chmod 660 /opt/ziga/ziga.db`.
 
 **2. Confirm rclone and the `r2:` remote.** hookdrop already set both up; ziga
-reuses them read-only and adds nothing:
+reuses the remote and adds only its own bucket:
 
 ```bash
 rclone version                                   # confirm rclone is installed
@@ -272,13 +272,38 @@ sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
 The credentials stay in that file. This repo references the config **path** only
 and never its contents — do not copy it into `/opt/ziga` or into git.
 
-**3. Install the script:**
+**3. Create the `ziga-backups` bucket — one time, before the first run.** The
+backup script passes `--s3-no-check-bucket` (matching hookdrop), which tells
+rclone *not* to create a missing bucket. That saves a request per run, but it
+means the first upload fails with `NoSuchBucket` unless the bucket already
+exists. Create it once, either in the Cloudflare dashboard (R2 → Create bucket →
+`ziga-backups`) or from the box:
+
+```bash
+# note: no --s3-no-check-bucket here — that flag would suppress the create
+sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
+    mkdir r2:ziga-backups
+
+sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
+    lsd r2:                                      # expect: ziga-backups + hookdrop-backups
+```
+
+Use the same Cloudflare account the `r2:` remote is configured against — if the
+bucket is not visible in the dashboard afterwards, the remote is pointed at a
+different account.
+
+> **Retention is enforced by the script, not by R2.** Do not add an R2 lifecycle
+> rule to this bucket; the nightly `rclone delete --min-age 30d` already prunes
+> it, and two independent expiry mechanisms make the real retention window hard
+> to reason about.
+
+**4. Install the script:**
 
 ```bash
 sudo install -o deploy -g deploy -m 750 deploy/backup-ziga.sh /opt/ziga/backup-ziga.sh
 ```
 
-**4. Install and enable the timer.** No editing required — the bucket, config
+**5. Install and enable the timer.** No editing required — the bucket, config
 path, retention window, and database path are defaulted in the script's header
 block; override any of them with `sudo systemctl edit ziga-backup.service` if
 they ever change.
@@ -294,7 +319,7 @@ systemctl list-timers ziga-backup.timer    # expect: a NEXT elapse ~02:30 UTC
 Enable the **timer**, not the service — enabling the service directly would run
 a backup at every boot instead of on schedule.
 
-**5. Run it once manually and confirm the object landed.** Dry run first (it
+**6. Run it once manually and confirm the object landed.** Dry run first (it
 still snapshots and gzips locally, so it proves everything short of the upload):
 
 ```bash
@@ -306,7 +331,7 @@ sudo -u deploy rclone --config /home/deploy/.config/rclone/rclone.conf \
     ls r2:ziga-backups/                    # expect a ziga-YYYYMMDD-HHMMSS.db.gz
 ```
 
-**6. RESTORE TEST — a backup is NOT done until a restore has been done.**
+**7. RESTORE TEST — a backup is NOT done until a restore has been done.**
 Download the object you just uploaded, decompress it, open it with sqlite3, and
 count rows. If this fails, the backup is worthless — fix it before moving on.
 
@@ -324,7 +349,7 @@ A clean `.tables` listing and a plausible row count means the pipeline is sound.
 Re-run this test after any change to the script, the bucket, or the rclone
 config — it is the only thing that proves the backups are restorable.
 
-**7. Check that it ran.** The timer logs to journald under `ziga-backup`:
+**8. Check that it ran.** The timer logs to journald under `ziga-backup`:
 
 ```bash
 systemctl list-timers ziga-backup.timer          # next + last elapse

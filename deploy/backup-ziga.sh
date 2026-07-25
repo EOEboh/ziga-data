@@ -35,6 +35,10 @@ DRY_RUN="${BACKUP_DRY_RUN:-0}"
 # hookdrop's R2 flags. They are split because they are NOT interchangeable:
 # --no-check-dest is a copy/sync-only flag and `rclone delete` rejects it as an
 # unknown flag, which would fail the prune every night.
+#
+# --s3-no-check-bucket also means rclone will NOT create the bucket if it is
+# missing: R2_DEST's bucket must already exist or every run fails with
+# NoSuchBucket. It is created once by hand — see RUNBOOK.md §e step 3.
 R2_FLAGS=(--config "${RCLONE_CONF}" --s3-no-check-bucket)
 COPY_FLAGS=("${R2_FLAGS[@]}" --no-check-dest)
 
