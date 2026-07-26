@@ -282,6 +282,47 @@ runbook's backup + restore-test section.
 > and `TOKEN_ENCRYPTION_KEY` in `/opt/ziga/ziga.env`, and working SMTP so
 > verification mail is delivered instead of logged. See RUNBOOK §h.
 
+## Local staging access
+
+Until DNS is flipped, the deployed app is reached over an SSH tunnel. One command
+opens a verified one:
+
+```sh
+make tunnel        # opens it, holds it open — Ctrl+C to close
+make tunnel-down   # closes a tunnel left running from somewhere else
+```
+
+`make tunnel` clears the port, opens the forward, and then **proves** it reaches
+the server: it clears a local `go run ./cmd/server` off `:8080` (only a dev build
+of this app — a process it doesn't recognize is reported and the run aborts
+rather than being force-killed), closes a stale tunnel, opens
+`ssh -N -L 8080:localhost:8090`, and polls `/healthz` until the server answers
+`ok`. If the app is down or ssh cannot connect or forward, it says so and exits
+non-zero instead of leaving you at a URL that silently serves something else.
+
+**It must stay running in its terminal.** The tunnel lives for as long as that
+`make tunnel` process does — Ctrl+C, closing the window, or sleeping the machine
+ends the session, and `localhost:8080` stops resolving to staging until you run
+it again. Use a dedicated terminal tab for it.
+
+The local port must stay **8080**: `APP_BASE_URL` and the redirect URI registered
+on the Google OAuth client both say `http://localhost:8080`, and Google matches
+the port exactly, so any other local port fails sign-in with
+`redirect_uri_mismatch`.
+
+The server host and deploy user are read from `deploy/tunnel.env`, which is
+**untracked** (the `*.env` gitignore rule covers it) so this public repo carries
+no real IP or username. Create it once:
+
+```sh
+printf 'TUNNEL_USER=%s\nTUNNEL_HOST=%s\n' <deploy user> <host> > deploy/tunnel.env
+```
+
+`make tunnel` prints this hint if the file is missing. Everything is overridable
+per invocation — `make tunnel TUNNEL_HOST=1.2.3.4`, and `LOCAL_PORT` /
+`REMOTE_PORT` likewise. See [RUNBOOK §f](deploy/RUNBOOK.md) for the manual
+equivalent and why the ports differ.
+
 ## TODO
 
 Deliberately out of scope for now:

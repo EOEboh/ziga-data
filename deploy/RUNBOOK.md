@@ -409,6 +409,12 @@ ssh -L 8080:localhost:8090 <DEPLOY_USER>@<HOST>
 # leave that open, then browse:  http://localhost:8080
 ```
 
+From a clone, `make tunnel` does the same thing with the port cleanup and a
+`/healthz` check built in, so a tunnel that failed to bind cannot masquerade as a
+working one — see the README's "Local staging access". It reads the host and user
+from an untracked `deploy/tunnel.env`; the manual command above stays the
+reference, since this runbook is placeholder-only by design.
+
 Note the ports differ on purpose: the app binds **8090** on the server (avoiding
 hookdrop), while the tunnel presents it on **8080** locally. The browser-facing
 port must stay 8080 — `APP_BASE_URL` and the redirect URI registered on the
