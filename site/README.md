@@ -14,9 +14,18 @@ site/
   terms.html      served at /terms
   styles.css      the only stylesheet
   robots.txt
+  site.webmanifest
   assets/
-    favicon.svg
+    favicon.svg          32x32, the Z mark knocked out of the brand green
+    apple-touch-icon.png 180x180, iOS home screen
+    icon-192.png         web app manifest
+    icon-512.png         web app manifest, also the maskable icon
+    og.png               1200x630 Open Graph / Twitter card
 ```
+
+Every asset in `assets/` except the demo slot is generated from `brand/mark.svg`
+by `brand/render.sh`. Do not hand-edit them — change the master and re-render.
+See `brand/README.md`.
 
 ## Local preview
 
@@ -70,11 +79,9 @@ npx wrangler pages deploy site --project-name=zigadata
       contact address in both legal documents, so it has to actually receive
       mail before you submit for Google verification. Cloudflare → your domain →
       **Email** → **Email Routing** → forward it to a real inbox. It is free.
-- [ ] **Favicon.** `assets/favicon.svg` is a placeholder mark in the brand green.
-      Replace it with the same logo you uploaded to the Google OAuth consent
-      screen so the branding matches.
-- [ ] **OG image.** Optional. Drop a 1200x630 PNG at `assets/og.png` and
-      uncomment the `og:image` tag in `index.html`.
+- [ ] **OAuth consent screen logo.** Upload `brand/png/oauth-logo-120.png` in the
+      Google Cloud console so the consent screen matches the site. It is the same
+      artwork as the favicon, and the branding must match for verification.
 
 ## Where the demo asset goes
 
@@ -104,7 +111,12 @@ authorized in the Google Cloud console. Three things must stay true:
   selects**. That matches the `drive.file` scope the app requests
   (`internal/oauth/oauth.go`), which is per file rather than whole-Drive.
 - The footer link to `/privacy` is a real, visible anchor on the homepage.
-- The wordmark reads **Ziga Data**, matching the OAuth consent screen name.
+- The wordmark reads **Ziga Data**, matching the OAuth consent screen name — on
+  the site, in the app's TopBar, and on the auth screens users land on straight
+  out of the consent flow. Never bare "Ziga".
+- The mark beside the wordmark is the same artwork as the consent screen logo
+  (`brand/png/oauth-logo-120.png`). Re-render both from `brand/mark.svg` if it
+  ever changes; a logo change re-triggers brand verification.
 
 If the requested scopes ever change, update the "What we access in your Google
 account" section of `privacy.html` in the same commit. A mismatch between the

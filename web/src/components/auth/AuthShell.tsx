@@ -1,4 +1,5 @@
 import { InputHTMLAttributes, ReactNode } from "react";
+import { Mark } from "../Mark";
 
 // AuthCard is the centered narrow container shared by every auth / onboarding
 // screen, matching the app's calm card pattern (surface + line + rounded-card).
@@ -6,8 +7,12 @@ export function AuthCard({ title, subtitle, children }: { title: string; subtitl
   return (
     <div className="min-h-dvh flex items-center justify-center p-6">
       <div className="w-full max-w-[400px]">
-        <div className="text-center mb-6">
-          <div className="text-lg font-semibold text-text">Ziga</div>
+        {/* Stacked lockup. Reads "Ziga Data", not "Ziga": this is the screen users
+            land on straight out of the Google consent flow, and the name here has
+            to match the consent screen for verification. */}
+        <div className="flex flex-col items-center gap-2 mb-6">
+          <Mark size={28} className="text-green" />
+          <div className="text-lg font-semibold text-text">Ziga Data</div>
         </div>
         <div className="bg-surface border border-line rounded-card p-6">
           <h1 className="text-base font-semibold text-text mb-1">{title}</h1>
