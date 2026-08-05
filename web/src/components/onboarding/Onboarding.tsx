@@ -18,7 +18,7 @@ export function Onboarding({ api, me, reload }: { api: Api; me: Me; reload: () =
 
   if (!me.google_connected) {
     return (
-      <AuthCard title="Connect your Google account" subtitle="Ziga writes each confirmed lead to your own Google Sheet.">
+      <AuthCard title="Connect your Google account" subtitle="Ziga Data writes each confirmed lead to your own Google Sheet.">
         <a
           href={googleStartURL}
           className="block text-center rounded-ctl border border-green bg-green text-white font-semibold px-4 py-2 hover:bg-green-deep"
@@ -26,7 +26,7 @@ export function Onboarding({ api, me, reload }: { api: Api; me: Me; reload: () =
           Connect Google
         </a>
         <p className="text-sm text-text-2 mt-4">
-          Ziga only requests access to sheets you create or choose here — never your whole Drive.
+          Ziga Data only requests access to sheets you create or choose here — never your whole Drive.
         </p>
       </AuthCard>
     );

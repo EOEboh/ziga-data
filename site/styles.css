@@ -136,12 +136,22 @@ a:hover {
 }
 
 .wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   font-size: 17px;
   letter-spacing: -0.01em;
   color: var(--color-text);
   text-decoration: none;
   margin-right: auto;
+}
+
+/* The mark is the only vector on the site. It carries the green; the wordmark
+   beside it stays in text colour so the pair reads as one lockup, not a badge. */
+.wordmark__mark {
+  flex: none;
+  fill: var(--color-green);
 }
 
 .wordmark:hover {

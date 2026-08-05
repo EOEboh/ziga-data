@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { Api } from "../api";
 import { Destination } from "../types";
 import { Button } from "./Button";
+import { Mark } from "./Mark";
 
 // Brand, Review/History nav with the queue badge, the New lead button, the
 // destination dropdown (incl. the disabled "Notion — coming soon" item), and
@@ -30,7 +31,10 @@ export function TopBar({
 
   return (
     <header className="flex items-center gap-6 px-6 py-3 bg-surface border-b border-line">
-      <div className="font-semibold text-[15px] tracking-[-0.01em]">Ziga Data</div>
+      <div className="flex items-center gap-2">
+        <Mark size={18} className="text-green" />
+        <div className="font-semibold text-[15px] tracking-[-0.01em]">Ziga Data</div>
+      </div>
       <nav className="flex gap-1">
         <a href="#/" className={navLink(route === "review")} onClick={onOpenQueue}>
           Review

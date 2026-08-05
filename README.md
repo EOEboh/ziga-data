@@ -1,4 +1,9 @@
-# Ziga Data
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/png/lockup-dark-1600.png">
+    <img src="brand/png/lockup-light-1600.png" alt="Ziga Data" width="260">
+  </picture>
+</h1>
 
 Paste unstructured lead info — text, a forwarded email, or a screenshot — and Ziga Data extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
 
