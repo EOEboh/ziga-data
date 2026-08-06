@@ -12,7 +12,7 @@ Paste unstructured lead info — text, a forwarded email, or a screenshot — an
 - **Auth**: email + password with emailed verification, password reset, and Google sign-in. Sessions are cookie-based with CSRF on every unsafe method.
 - **Destination**: a pluggable interface (`internal/destination.Writer`) with two implementations, one active per user.
   - **Google Sheets** — called with each user's own OAuth token under the `drive.file` scope. Ziga Data can only see the spreadsheet a user created through the app or picked with the Google Picker — nothing else in their Drive.
-  - **Notion** — called with each user's own workspace token from a public integration. Notion's consent screen has the user pick exactly which pages and databases to share; Ziga Data never requests whole-workspace access.
+  - **Notion** — called with each user's own workspace token from a public connection. Notion's consent screen has the user pick exactly which pages and databases to share; Ziga Data never requests whole-workspace access.
 - **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Frontend**: React 18 + TypeScript built with Vite (`web/`), styled with Tailwind CSS on shared design tokens. `BrowserRouter` for the auth and onboarding screens; a `useReducer` state machine for the review flow.
 - **Storage**: a single SQLite file for accounts, encrypted OAuth tokens, per-user destinations, dedup keys, pending reviews, failed writes, and history. Raw originals (full pasted text, uploaded images) are purged `RETENTION_DAYS` (default 14) after a submission is confirmed or discarded — extraction results and the short excerpt stay. The cleanup runs at boot and daily.
@@ -35,7 +35,7 @@ When either provider is configured the process-wide writer is never consulted. T
 
 **The unit of exchange is a lead, not a row.** `destination.Lead` is ordered (field, value) pairs. A sheet writes the values in column order; Notion needs to know which field each value came from, because its properties are typed. A write returns which fields the destination could not accept, so a partial write is reported rather than silently lossy.
 
-Tokens are encrypted at rest with AES-256-GCM (`internal/secretbox`) before they reach SQLite, and refreshed Google access tokens are re-encrypted and written back as they rotate. Notion tokens are long-lived and carry a refresh token only when the integration uses token rotation, so both refresh and expiry are optional there.
+Tokens are encrypted at rest with AES-256-GCM (`internal/secretbox`) before they reach SQLite, and refreshed Google access tokens are re-encrypted and written back as they rotate. Notion tokens are long-lived and carry a refresh token only when the connection uses token rotation, so both refresh and expiry are optional there.
 
 Two connection states surface to the user rather than failing a write: a user with no destination yet gets `409 Connect a destination before confirming`, and a revoked or expired grant gets a `409` reconnect prompt that also flags the destination so the picker and account menu ask for a reconnect. A **broken destination is still a configured one** — that user stays in the app with a reconnect prompt and can keep submitting and reviewing; only the write is blocked.
 
@@ -150,9 +150,9 @@ All three of the `NOTION_OAUTH_*` variables, or none. Partial configuration is a
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `NOTION_OAUTH_CLIENT_ID` | to offer Notion | — | From a Notion **public** integration |
-| `NOTION_OAUTH_CLIENT_SECRET` | to offer Notion | — | Same integration |
-| `NOTION_OAUTH_REDIRECT_URL` | to offer Notion | — | Must match a redirect URI registered on the integration exactly |
+| `NOTION_OAUTH_CLIENT_ID` | to offer Notion | — | From a Notion **public connection** |
+| `NOTION_OAUTH_CLIENT_SECRET` | to offer Notion | — | Same connection |
+| `NOTION_OAUTH_REDIRECT_URL` | to offer Notion | — | Must match a redirect URI registered on the connection exactly |
 | `NOTION_VERSION` | | `2026-03-11` | The `Notion-Version` header sent on every request. See [Notion API version](#notion-api-version) before changing it |
 
 **Sheet layout**
@@ -216,9 +216,11 @@ From then on every confirmed row is appended to that user's sheet using their ow
 
 Optional. With the `NOTION_OAUTH_*` variables unset, Notion is simply not offered and every `/api/notion/*` route returns 404.
 
-1. Create a **public integration** at [notion.so/my-integrations](https://www.notion.so/my-integrations) (public is what lets other people's workspaces connect, and is what the OAuth flow requires).
-2. Register the redirect URI on the integration — it must match `NOTION_OAUTH_REDIRECT_URL` exactly, including scheme and port.
+1. In the [Notion developer portal](https://app.notion.com/developers/connections), create a **public connection**. Notion renamed these from "integrations" — the OAuth credentials live on the **Configuration** tab. Only a *public* connection speaks OAuth; an *internal* connection uses a static token and cannot serve other people's workspaces.
+2. Register the redirect URI on the connection — it must match `NOTION_OAUTH_REDIRECT_URL` exactly, including scheme and port.
 3. Set `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URL`, and `TOKEN_ENCRYPTION_KEY`.
+
+> **A public connection must be submitted for review before its OAuth flow goes live.** Notion populates the connection's Authorization URL only after submission, so plan for that lead time before a public launch — and see [Verifying against a real workspace](#verifying-against-a-real-workspace) for what can be tested before then.
 
 **All three or none.** Setting some but not others is a **boot error** that names the missing ones — the same guard as `ZIGA_DEV_MODE` for Google, so a typo can never produce a running process that offers a "Connect Notion" button which then dies at the callback.
 
@@ -227,6 +229,19 @@ Optional. With the `NOTION_OAUTH_*` variables unset, Notion is simply not offere
 1. Picks Notion as their destination, and is sent to Notion's consent screen where they tick exactly which pages and databases to share.
 2. Either lets Ziga **create a "Ziga Leads" database** (the safe default — the app owns the schema, so every field has a home of the right type and nothing can be dropped), or **picks an existing database**.
 3. For an existing database, reviews the **field→property mapping** and adjusts it before saving.
+
+### Verifying against a real workspace
+
+A public connection must be submitted for review before Notion serves its OAuth consent screen, which gates the full end-to-end check. What can be verified before that:
+
+| Check | Needs review? |
+|---|---|
+| Boot guards — partial config exits naming the missing vars; no config boots with Notion unoffered | no |
+| The whole UI flow — connect, create/pick, mapping, dropped fields, reconnect — via `?mock=1` | no |
+| Whether `api.notion.com/v1/oauth/authorize` accepts the client id (hit the consent URL and see whether it serves a page or rejects the client) | no — one request |
+| Token exchange, schema fetch, page create, select-option creation, revoked-access handling | **yes** |
+
+The last row is the one that validates this build's assumptions about Notion's response shapes, since every test runs against fakes built from the documentation.
 
 ### Why there is a mapping step
 
@@ -246,7 +261,7 @@ Notion pins behavior to a dated `Notion-Version` header sent on **every** reques
 
 This build targets the **data-source model** introduced in `2025-09-03`: a database is a parent of one or more data sources, the property schema lives on the data source, and pages are created with a `data_source_id` parent. Do not set this back to `2022-06-28` — Notion documents that version as failing outright on databases with more than one data source, which would break lead writes for a user who merely restructured their database.
 
-Notion's rate limit is roughly **3 requests per second per integration install**, enforced client-side by a limiter keyed per workspace, with retry-on-429 honoring `Retry-After`.
+Notion's rate limit is roughly **3 requests per second per connection install**, enforced client-side by a limiter keyed per workspace, with retry-on-429 honoring `Retry-After`.
 
 ## API
 
@@ -296,7 +311,7 @@ Every unsafe method carries CSRF. Routes marked 🔒 require a session and opera
 | `GET /api/submissions/{id}/image` | the original uploaded image |
 | `GET /api/queue` | pending + failed submissions, newest 100, with `count` for the badge |
 | `GET /api/preview` | last 3 leads at the user's destination, in schema column order. Degrades to an empty strip rather than erroring when nothing is connected or the grant is broken |
-| `GET /api/destination` | the user's active destination plus the alternatives, for the picker. An alternative is marked `unavailable` when this server has no integration configured for it |
+| `GET /api/destination` | the user's active destination plus the alternatives, for the picker. An alternative is marked `unavailable` when this server has no connection configured for it |
 | `GET /api/history` | last 50 written submissions |
 
 `GET /healthz` is the unauthenticated liveness probe.

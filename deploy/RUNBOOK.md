@@ -133,11 +133,17 @@ enforced rather than merely advised:
 
 To turn Notion on:
 
-1. Create a **public integration** at <https://www.notion.so/my-integrations>
-   (Notion calls this "Public integration" in the integration's Distribution
-   tab; a public integration is what allows other people's workspaces to
-   connect, and it is what the OAuth flow requires).
-2. Register the redirect URI on the integration. It must match
+1. Create a **public connection** in the Notion developer portal at
+   <https://app.notion.com/developers/connections>. Notion renamed these from
+   "integrations"; the OAuth client id and secret live on the connection's
+   **Configuration** tab. Only a *public* connection speaks OAuth — an
+   *internal* connection uses a static API token and cannot serve other
+   people's workspaces.
+
+   Note that a public connection must be **submitted for review** before its
+   OAuth authorization URL goes live, so allow lead time for that ahead of a
+   public launch.
+2. Register the redirect URI on the connection. It must match
    `NOTION_OAUTH_REDIRECT_URL` **exactly**, including scheme and port. For
    staging behind the SSH tunnel that is
    `http://localhost:8080/api/notion/callback`; in production it is
@@ -153,7 +159,7 @@ sudo journalctl -u ziga -n 30 | grep -i notion
 ```
 
 Users grant access **per resource**: on Notion's own consent screen they pick
-exactly which pages and databases the integration may touch. The app never asks
+exactly which pages and databases the connection may touch. The app never asks
 for whole-workspace access — the same posture as `drive.file` on the Google side.
 
 **About `NOTION_VERSION`.** Notion pins API behavior to a dated version header
