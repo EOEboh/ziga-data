@@ -270,10 +270,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	resp["user"] = toUserJSON(u)
 	resp["google_connected"] = s.googleConnected(r, uid)
 	resp["notion_connected"] = s.notionConnected(r.Context(), uid)
+	// connected: writable right now. configured: chosen at all, which is what
+	// gates onboarding — a broken destination still belongs to a user who is
+	// past setup and needs a reconnect prompt, not the setup flow again.
 	resp["destination_connected"] = s.destinationConnected(r.Context(), uid)
-	// sheet_connected is the pre-generalization name for the same thing, kept
-	// until the frontend moves over to destination_connected.
-	resp["sheet_connected"] = resp["destination_connected"]
+	resp["destination_configured"] = s.destinationConfigured(r.Context(), uid)
 	writeJSON(w, http.StatusOK, resp)
 }
 

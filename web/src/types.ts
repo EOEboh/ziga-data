@@ -51,14 +51,26 @@ export interface PreviewResponse {
   error?: string;
 }
 
+export type DestinationType = "google_sheet" | "notion";
+
 export interface Destination {
   id: string;
   label: string;
-  type: string;
+  type: DestinationType | string;
   active?: boolean;
   disabled?: boolean;
-  coming_soon?: boolean;
+  /** The provider is not configured on this server, so it cannot be chosen. */
+  unavailable?: boolean;
   dry_run?: boolean;
+  connected?: boolean;
+  needs_setup?: boolean;
+  needs_reconnect?: boolean;
+  // google_sheet
+  spreadsheet_id?: string;
+  // notion
+  database_id?: string;
+  database_title?: string;
+  created_by_app?: boolean;
 }
 
 export interface DestinationResponse {
@@ -68,6 +80,10 @@ export interface DestinationResponse {
 export interface ConfirmResponse {
   id: number;
   status: Status;
+  /** Schema fields the destination had no home for. Never silently dropped. */
+  dropped_fields?: string[];
+  /** Link to the written row/page, when the destination exposes one. */
+  url?: string;
 }
 
 export interface HistoryItem {
@@ -101,12 +117,21 @@ export interface Me {
   authenticated: boolean;
   user: User | null;
   google_connected?: boolean;
-  sheet_connected?: boolean;
+  notion_connected?: boolean;
+  /** A destination is chosen and writable right now. */
+  destination_connected?: boolean;
+  /**
+   * A destination has been chosen at all, healthy or not. This is what gates
+   * onboarding: a user whose access was revoked is past setup and needs a
+   * reconnect prompt, not the setup flow again.
+   */
+  destination_configured?: boolean;
   config: {
     google_oauth: boolean;
     google_client_id: string;
     google_picker_api_key: string;
     google_project_number: string;
+    notion_oauth: boolean;
   };
 }
 
@@ -114,4 +139,54 @@ export interface SheetConnection {
   spreadsheet_id: string;
   sheet_tab: string;
   created_by_app: boolean;
+}
+
+// --- Notion ---
+
+/** A database or page the user granted Ziga access to during Notion consent. */
+export interface NotionResource {
+  id: string;
+  title: string;
+  data_source_id?: string;
+}
+
+export interface NotionResources {
+  databases: NotionResource[];
+  pages: NotionResource[];
+  /** Creating a database needs a granted parent page; false when none was granted. */
+  can_create: boolean;
+}
+
+/** One property of a Notion database, offered as a mapping target. */
+export interface NotionProperty {
+  name: string;
+  type: string;
+  /** False for types Ziga cannot write (status, formula, rollup...). */
+  writable: boolean;
+}
+
+/** A Ziga field's target property. `name` keeps Notion's exact casing. */
+export interface MappedProperty {
+  name: string;
+  type: string;
+}
+
+export type NotionMapping = Record<string, MappedProperty>;
+
+export interface NotionMappingResponse {
+  database_id: string;
+  data_source_id: string;
+  database_title: string;
+  fields: string[];
+  properties: NotionProperty[];
+  mapping: NotionMapping;
+  unmapped: string[];
+}
+
+export interface NotionConnection {
+  database_id: string;
+  database_title: string;
+  created_by_app: boolean;
+  mapping: NotionMapping;
+  unmapped?: string[];
 }

@@ -68,7 +68,7 @@ func (s *Server) handleNotionCallback(w http.ResponseWriter, r *http.Request) {
 	// Anti-forgery: the state in the query must match the cookie.
 	stateCookie, err := r.Cookie(notionStateCookie)
 	if err != nil || stateCookie.Value == "" || stateCookie.Value != r.URL.Query().Get("state") {
-		s.redirectApp(w, r, "/onboarding/notion?notion_error=state")
+		s.redirectApp(w, r, "/onboarding-notion?notion_error=state")
 		return
 	}
 	// Clear the one-shot state cookie.
@@ -77,7 +77,7 @@ func (s *Server) handleNotionCallback(w http.ResponseWriter, r *http.Request) {
 	// The user may have declined on Notion's consent screen.
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		s.redirectApp(w, r, "/onboarding/notion?notion_error=denied")
+		s.redirectApp(w, r, "/onboarding-notion?notion_error=denied")
 		return
 	}
 
@@ -85,16 +85,16 @@ func (s *Server) handleNotionCallback(w http.ResponseWriter, r *http.Request) {
 	grant, err := s.notionAuth.Exchange(ctx, code)
 	if err != nil {
 		s.log.Error("notion exchange", "err", err)
-		s.redirectApp(w, r, "/onboarding/notion?notion_error=exchange")
+		s.redirectApp(w, r, "/onboarding-notion?notion_error=exchange")
 		return
 	}
 	if err := s.storeNotionToken(ctx, userID(r), grant); err != nil {
 		s.log.Error("store notion token", "err", err)
-		s.redirectApp(w, r, "/onboarding/notion?notion_error=server")
+		s.redirectApp(w, r, "/onboarding-notion?notion_error=server")
 		return
 	}
 	s.log.Info("notion workspace connected", "workspace", grant.WorkspaceName)
-	s.redirectApp(w, r, "/onboarding/notion")
+	s.redirectApp(w, r, "/onboarding-notion")
 }
 
 // storeNotionToken encrypts and persists the workspace access token, reusing

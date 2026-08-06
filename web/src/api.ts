@@ -5,6 +5,10 @@ import {
   FieldState,
   HistoryResponse,
   Me,
+  NotionConnection,
+  NotionMapping,
+  NotionMappingResponse,
+  NotionResources,
   PreviewResponse,
   QueueResponse,
   SheetConnection,
@@ -43,6 +47,13 @@ export interface Api {
   disconnectGoogle(): Promise<void>;
   createSheet(): Promise<SheetConnection>;
   attachSheet(spreadsheetId: string): Promise<SheetConnection>;
+
+  // Notion destination.
+  notionResources(): Promise<NotionResources>;
+  notionMapping(databaseId: string): Promise<NotionMappingResponse>;
+  createNotionDatabase(parentPageId: string): Promise<NotionConnection>;
+  setNotionDestination(databaseId: string, mapping: NotionMapping): Promise<NotionConnection>;
+  disconnectNotion(): Promise<void>;
 }
 
 // readCookie returns a document cookie value by name, or "".
@@ -136,6 +147,22 @@ class HttpApi implements Api {
   attachSheet(spreadsheetId: string): Promise<SheetConnection> {
     return postJSON<SheetConnection>("/api/sheets/attach", { spreadsheet_id: spreadsheetId });
   }
+
+  notionResources(): Promise<NotionResources> {
+    return request<NotionResources>("/api/notion/resources");
+  }
+  notionMapping(databaseId: string): Promise<NotionMappingResponse> {
+    return request<NotionMappingResponse>(`/api/notion/databases/${encodeURIComponent(databaseId)}/mapping`);
+  }
+  createNotionDatabase(parentPageId: string): Promise<NotionConnection> {
+    return postJSON<NotionConnection>("/api/notion/databases/create", { parent_page_id: parentPageId });
+  }
+  setNotionDestination(databaseId: string, mapping: NotionMapping): Promise<NotionConnection> {
+    return postJSON<NotionConnection>("/api/notion/destination", { database_id: databaseId, mapping });
+  }
+  async disconnectNotion(): Promise<void> {
+    await postJSON("/api/notion/disconnect", {});
+  }
 }
 
 function postJSON<T = unknown>(url: string, body: unknown): Promise<T> {
@@ -146,9 +173,10 @@ function postJSON<T = unknown>(url: string, body: unknown): Promise<T> {
   });
 }
 
-// googleStartURL is the top-level navigation that begins Google OAuth (not a
-// fetch — the browser is redirected to Google and back).
+// googleStartURL / notionStartURL are top-level navigations that begin OAuth
+// (not fetches — the browser is redirected to the provider and back).
 export const googleStartURL = "/api/auth/google/start";
+export const notionStartURL = "/api/notion/start";
 
 export function createApi(): Api {
   return new URLSearchParams(location.search).has("mock") ? new MockApi() : new HttpApi();

@@ -8,13 +8,44 @@ import { Button } from "../Button";
 
 const isMock = () => new URLSearchParams(location.search).has("mock");
 
-// Onboarding gates the app until the user has connected Google and chosen a
-// destination sheet. Step 1: connect Google. Step 2: create a new sheet or
-// attach an existing one via the Picker.
+// Onboarding gates the app until the user has connected a lead destination.
+// Step 1 is the choice of destination — Google Sheets or Notion — since the
+// two need different connections. Google Sheets then continues here (connect
+// Google, then create or pick a sheet); Notion hands off to /onboarding-notion.
 export function Onboarding({ api, me, reload }: { api: Api; me: Me; reload: () => void }) {
   const nav = useNavigate();
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Which destination the user picked. Null until they choose; a user who has
+  // already connected Google is past the choice for the Sheets path.
+  const [kind, setKind] = useState<"google_sheet" | "notion" | null>(null);
+
+  const notionOffered = me.config.notion_oauth;
+
+  // The choice is always the first step, whether this is first-run onboarding
+  // or a deliberate switch from the account menu.
+  if (kind === null) {
+    return (
+      <AuthCard title="Where should your leads go?" subtitle="Ziga writes each confirmed lead to one destination.">
+        <div className="flex flex-col gap-3">
+          <Button variant="primary" onClick={() => setKind("google_sheet")}>
+            Google Sheets
+          </Button>
+          <Button
+            disabled={!notionOffered}
+            onClick={() => nav("/onboarding-notion")}
+            title={notionOffered ? undefined : "Notion is not configured on this server"}
+          >
+            Notion
+          </Button>
+        </div>
+        <p className="text-sm text-text-2 mt-4">
+          Only one destination is active at a time. Switching replaces the current one; nothing
+          already written is affected.
+        </p>
+      </AuthCard>
+    );
+  }
 
   if (!me.google_connected) {
     return (
@@ -28,6 +59,11 @@ export function Onboarding({ api, me, reload }: { api: Api; me: Me; reload: () =
         <p className="text-sm text-text-2 mt-4">
           Ziga Data only requests access to sheets you create or choose here — never your whole Drive.
         </p>
+        <div className="mt-4 pt-4 border-t border-line">
+          <Button variant="ghost" className="w-full" onClick={() => setKind(null)}>
+            Choose a different destination
+          </Button>
+        </div>
       </AuthCard>
     );
   }
@@ -81,6 +117,13 @@ export function Onboarding({ api, me, reload }: { api: Api; me: Me; reload: () =
           Choose an existing sheet
         </Button>
       </div>
+      {notionOffered && (
+        <div className="mt-4 pt-4 border-t border-line">
+          <Button variant="ghost" className="w-full" disabled={busy} onClick={() => nav("/onboarding-notion")}>
+            Use Notion instead
+          </Button>
+        </div>
+      )}
     </AuthCard>
   );
 }

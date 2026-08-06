@@ -236,12 +236,30 @@ func (s *Server) reconnectOrError(w http.ResponseWriter, err error) {
 	httpError(w, http.StatusInternalServerError, "internal error")
 }
 
-// destinationConnected reports whether the user has a usable destination of
-// any type. In dev / dry-run mode the in-memory writer is always "connected".
+// destinationConnected reports whether the user has a destination that can be
+// written to right now. In dev / dry-run mode the in-memory writer is always
+// "connected".
 func (s *Server) destinationConnected(ctx context.Context, uid int64) bool {
 	if !s.destinationsEnabled() {
 		return true
 	}
 	dest, err := s.store.GetDestination(ctx, uid)
 	return err == nil && !dest.Broken()
+}
+
+// destinationConfigured reports whether the user has chosen a destination at
+// all, healthy or not.
+//
+// This is deliberately separate from destinationConnected: "has this user
+// finished onboarding?" and "can we write right now?" are different questions.
+// Conflating them sends a user whose access was revoked back through
+// destination setup, when what they need is a reconnect prompt — and it leaves
+// them unable to submit or review leads in the meantime, which still works
+// perfectly well without a writable destination.
+func (s *Server) destinationConfigured(ctx context.Context, uid int64) bool {
+	if !s.destinationsEnabled() {
+		return true
+	}
+	_, err := s.store.GetDestination(ctx, uid)
+	return err == nil
 }
