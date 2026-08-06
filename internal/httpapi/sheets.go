@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/sheets"
 	"github.com/EOEboh/ziga-data/internal/store"
 	"golang.org/x/oauth2"
@@ -28,6 +30,13 @@ func (s *Server) googleEnabled() bool {
 	return s.oauth != nil && s.oauth.Configured() && s.box != nil
 }
 
+// destinationsEnabled reports whether any real destination provider is
+// configured. When false the app is in dev / dry-run mode: there are no
+// per-user destinations and every write goes to the in-memory writer.
+func (s *Server) destinationsEnabled() bool {
+	return s.googleEnabled()
+}
+
 // header is the column-name row to maintain, or nil in no-header mode.
 func (s *Server) header() []string {
 	if s.cfg.HeaderRow {
@@ -36,23 +45,40 @@ func (s *Server) header() []string {
 	return nil
 }
 
-// writerFor resolves the RowWriter for a user. In dev/dry-run it's the shared
-// in-memory writer; otherwise it's a per-user Sheets writer built from the
-// user's connected sheet and OAuth token. Returns errNoSheet / errReconnect for
-// the onboarding and reconnect states.
-func (s *Server) writerFor(ctx context.Context, uid int64) (RowWriter, error) {
-	if !s.googleEnabled() {
+// writerFor resolves the destination writer for a user by their destination
+// type. In dev/dry-run it's the shared in-memory writer. Returns errNoSheet /
+// errReconnect for the onboarding and reconnect states.
+//
+// This is the one place that knows which writer implementation serves which
+// destination type; everything downstream works through destination.Writer.
+func (s *Server) writerFor(ctx context.Context, uid int64) (destination.Writer, error) {
+	if !s.destinationsEnabled() {
 		return s.writer, nil
 	}
-	sheet, err := s.store.GetUserSheet(ctx, uid)
+	dest, err := s.store.GetDestination(ctx, uid)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, errNoSheet
 	}
 	if err != nil {
 		return nil, err
 	}
-	if sheet.Broken() {
+	if dest.Broken() {
 		return nil, errReconnect
+	}
+	switch destination.Type(dest.Type) {
+	case destination.TypeGoogleSheet:
+		return s.sheetWriter(ctx, uid, dest)
+	default:
+		return nil, fmt.Errorf("unknown destination type %q", dest.Type)
+	}
+}
+
+// sheetWriter builds a per-user Google Sheets writer from the user's connected
+// sheet and OAuth token.
+func (s *Server) sheetWriter(ctx context.Context, uid int64, dest *store.Destination) (destination.Writer, error) {
+	cfg, err := dest.SheetConfig()
+	if err != nil {
+		return nil, err
 	}
 	ts, err := s.userTokenSource(ctx, uid)
 	if err != nil {
@@ -64,7 +90,7 @@ func (s *Server) writerFor(ctx context.Context, uid int64) (RowWriter, error) {
 		s.markConnectionBroken(ctx, uid)
 		return nil, errReconnect
 	}
-	return sheets.NewOAuthWriter(ctx, ts, sheet.SpreadsheetID, sheet.SheetTab, s.header(), s.sheetsOpts...)
+	return sheets.NewOAuthWriter(ctx, ts, cfg.SpreadsheetID, cfg.SheetTab, s.header(), s.sheetsOpts...)
 }
 
 // userTokenSource builds a refreshing token source for the user, persisting
@@ -102,14 +128,14 @@ func (s *Server) userTokenSource(ctx context.Context, uid int64) (oauth2.TokenSo
 	}), nil
 }
 
-// markConnectionBroken flags both the OAuth link and the sheet so /api/me and
-// the destination picker prompt a reconnect.
+// markConnectionBroken flags both the OAuth link and the destination so
+// /api/me and the destination picker prompt a reconnect.
 func (s *Server) markConnectionBroken(ctx context.Context, uid int64) {
 	if err := s.store.MarkOAuthBroken(ctx, uid, googleProvider); err != nil {
 		s.log.Error("mark oauth broken", "err", err)
 	}
-	if err := s.store.MarkSheetBroken(ctx, uid); err != nil {
-		s.log.Error("mark sheet broken", "err", err)
+	if err := s.store.MarkDestinationBroken(ctx, uid); err != nil {
+		s.log.Error("mark destination broken", "err", err)
 	}
 }
 
@@ -132,10 +158,10 @@ func (s *Server) handleSheetsCreate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "could not create your Google Sheet")
 		return
 	}
-	if err := s.store.SetUserSheet(r.Context(), &store.UserSheet{
-		UserID: uid, SpreadsheetID: id, SheetTab: s.cfg.SheetTab, CreatedByApp: true,
+	if err := s.setSheetDestination(r.Context(), uid, &store.SheetConfig{
+		SpreadsheetID: id, SheetTab: s.cfg.SheetTab, CreatedByApp: true,
 	}); err != nil {
-		s.log.Error("save user sheet", "err", err)
+		s.log.Error("save sheet destination", "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -176,14 +202,26 @@ func (s *Server) handleSheetsAttach(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "could not open that spreadsheet")
 		return
 	}
-	if err := s.store.SetUserSheet(r.Context(), &store.UserSheet{
-		UserID: uid, SpreadsheetID: req.SpreadsheetID, SheetTab: tab, CreatedByApp: false,
+	if err := s.setSheetDestination(r.Context(), uid, &store.SheetConfig{
+		SpreadsheetID: req.SpreadsheetID, SheetTab: tab, CreatedByApp: false,
 	}); err != nil {
-		s.log.Error("save user sheet", "err", err)
+		s.log.Error("save sheet destination", "err", err)
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spreadsheet_id": req.SpreadsheetID, "sheet_tab": tab, "created_by_app": false})
+}
+
+// setSheetDestination makes a Google Sheet the user's active destination,
+// replacing whatever was there before (one destination at a time).
+func (s *Server) setSheetDestination(ctx context.Context, uid int64, cfg *store.SheetConfig) error {
+	blob, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.store.SetDestination(ctx, &store.Destination{
+		UserID: uid, Type: string(destination.TypeGoogleSheet), Config: blob,
+	})
 }
 
 // reconnectOrError maps a token-source error to a response.
@@ -196,12 +234,12 @@ func (s *Server) reconnectOrError(w http.ResponseWriter, err error) {
 	httpError(w, http.StatusInternalServerError, "internal error")
 }
 
-// sheetConnected reports whether the user has a usable destination. In dev /
-// dry-run mode the in-memory writer is always "connected".
-func (s *Server) sheetConnected(ctx context.Context, uid int64) bool {
-	if !s.googleEnabled() {
+// destinationConnected reports whether the user has a usable destination of
+// any type. In dev / dry-run mode the in-memory writer is always "connected".
+func (s *Server) destinationConnected(ctx context.Context, uid int64) bool {
+	if !s.destinationsEnabled() {
 		return true
 	}
-	sheet, err := s.store.GetUserSheet(ctx, uid)
-	return err == nil && !sheet.Broken()
+	dest, err := s.store.GetDestination(ctx, uid)
+	return err == nil && !dest.Broken()
 }

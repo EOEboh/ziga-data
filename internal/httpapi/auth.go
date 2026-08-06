@@ -268,7 +268,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	resp["authenticated"] = true
 	resp["user"] = toUserJSON(u)
 	resp["google_connected"] = s.googleConnected(r, uid)
-	resp["sheet_connected"] = s.sheetConnected(r.Context(), uid)
+	resp["destination_connected"] = s.destinationConnected(r.Context(), uid)
+	// sheet_connected is the pre-generalization name for the same thing, kept
+	// until the frontend moves over to destination_connected.
+	resp["sheet_connected"] = resp["destination_connected"]
 	writeJSON(w, http.StatusOK, resp)
 }
 

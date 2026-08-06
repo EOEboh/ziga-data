@@ -2,16 +2,21 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/store"
 	"google.golang.org/api/option"
+	_ "modernc.org/sqlite"
 )
 
 func itoa(i int64) string { return strconv.FormatInt(i, 10) }
@@ -96,15 +101,33 @@ func newSheetsTest(t *testing.T) (*authTest, *fakeSheets, int64) {
 	return a, fsheets, u.ID
 }
 
+// mustSheetDestination reads back the user's destination and asserts it is a
+// Google Sheet, returning its decoded config.
+func mustSheetDestination(t *testing.T, a *authTest, uid int64) *store.SheetConfig {
+	t.Helper()
+	dest, err := a.s.store.GetDestination(context.Background(), uid)
+	if err != nil {
+		t.Fatalf("get destination: %v", err)
+	}
+	if dest.Type != string(destination.TypeGoogleSheet) {
+		t.Fatalf("destination type = %q, want google_sheet", dest.Type)
+	}
+	cfg, err := dest.SheetConfig()
+	if err != nil {
+		t.Fatalf("decode sheet config: %v", err)
+	}
+	return cfg
+}
+
 func TestSheetsCreateStoresDestination(t *testing.T) {
 	a, _, uid := newSheetsTest(t)
 	rec := a.do("POST", "/api/sheets/create", map[string]string{}, true)
 	if rec.Code != 200 {
 		t.Fatalf("create code=%d", rec.Code)
 	}
-	sheet, err := a.s.store.GetUserSheet(context.Background(), uid)
-	if err != nil || sheet.SpreadsheetID != "new-sheet-id" || !sheet.CreatedByApp {
-		t.Fatalf("user sheet not stored: %+v err=%v", sheet, err)
+	sheet := mustSheetDestination(t, a, uid)
+	if sheet.SpreadsheetID != "new-sheet-id" || !sheet.CreatedByApp {
+		t.Fatalf("sheet destination not stored: %+v", sheet)
 	}
 }
 
@@ -115,9 +138,9 @@ func TestSheetsAttachStoresExistingSheet(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("attach code=%d", rec.Code)
 	}
-	sheet, err := a.s.store.GetUserSheet(context.Background(), uid)
-	if err != nil || sheet.SpreadsheetID != "existing-123" || sheet.SheetTab != "Contacts" || sheet.CreatedByApp {
-		t.Fatalf("attached sheet wrong: %+v err=%v", sheet, err)
+	sheet := mustSheetDestination(t, a, uid)
+	if sheet.SpreadsheetID != "existing-123" || sheet.SheetTab != "Contacts" || sheet.CreatedByApp {
+		t.Fatalf("attached sheet wrong: %+v", sheet)
 	}
 }
 
@@ -174,5 +197,90 @@ func TestConfirmWithBrokenConnectionPromptsReconnect(t *testing.T) {
 	rec := a.do("POST", "/api/submissions/"+itoa(sub.ID)+"/confirm", map[string]any{"fields": map[string]string{}}, true)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("confirm with broken connection: code=%d, want 409 reconnect", rec.Code)
+	}
+}
+
+// TestLegacySheetUserWritesAfterMigration is the regression guarantee for the
+// destination-model generalization: a user who connected a Google Sheet under
+// the previous build — a user_sheets row and no destinations row — must keep
+// writing to that same spreadsheet after upgrading, with no reconnect.
+//
+// It walks the whole path: seed a database the way the old binary left it,
+// boot the server on it (which migrates), sign in, confirm a lead, and assert
+// the row landed on the original spreadsheet.
+func TestLegacySheetUserWritesAfterMigration(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "legacy-user.db")
+
+	// A database as the previous build left it: a verified user with a
+	// connected sheet recorded in user_sheets, and no destinations table.
+	// The legacy state is written over the raw file, since this build has no
+	// Go accessors for user_sheets any more.
+	func() {
+		st, err := store.Open(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, err := st.CreateUser(ctx, "owner@x.com", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.MarkEmailVerified(ctx, u.ID); err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if _, err := db.Exec(`DROP TABLE destinations`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`
+			INSERT INTO user_sheets (user_id, spreadsheet_id, sheet_tab, created_by_app, connected_at, broken_at)
+			VALUES (?, 'legacy-sheet-id', 'Leads', 1, ?, NULL)`,
+			u.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	// Boot on that database — store.Open migrates it — and sign the user in.
+	a, fg := newGoogleTestAt(t, dbPath)
+	fsheets := newFakeSheets(t)
+	a.s.sheetsOpts = []option.ClientOption{option.WithEndpoint(fsheets.server.URL)}
+	fg.info = oauth.UserInfo{Sub: "legacy-google-sub", Email: "owner@x.com", EmailVerified: true}
+	a.runOAuthCallback(t)
+
+	u, err := a.s.store.GetUserByEmail(ctx, "owner@x.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The migrated destination points at the original spreadsheet, and the
+	// user is not asked to reconnect or re-onboard.
+	sheet := mustSheetDestination(t, a, u.ID)
+	if sheet.SpreadsheetID != "legacy-sheet-id" || sheet.SheetTab != "Leads" {
+		t.Fatalf("migrated destination = %+v, want legacy-sheet-id/Leads", sheet)
+	}
+	if !a.s.destinationConnected(ctx, u.ID) {
+		t.Fatal("a migrated user must read as connected, not sent back to onboarding")
+	}
+
+	// A confirmed lead still lands on that same spreadsheet.
+	extraction, _ := json.Marshal(goodResult())
+	sub := &store.Submission{
+		UserID: u.ID, ContentHash: "legacy-hash", Status: store.StatusPending, Extraction: extraction,
+	}
+	if _, err := a.s.store.Insert(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	rec := a.do("POST", "/api/submissions/"+itoa(sub.ID)+"/confirm", map[string]any{"fields": map[string]string{}}, true)
+	if rec.Code != 200 {
+		t.Fatalf("confirm code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rows := fsheets.appends["legacy-sheet-id"]; len(rows) == 0 {
+		t.Fatalf("lead did not reach the pre-existing sheet; appends=%v", fsheets.appends)
 	}
 }

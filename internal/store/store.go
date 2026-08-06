@@ -144,11 +144,16 @@ func migrate(db *sql.DB) error {
 
 	// Rows settled before settled_at existed: approximate with created_at so
 	// the retention purge eventually reaches them.
-	_, err = db.Exec(`
+	if _, err := db.Exec(`
 		UPDATE submissions SET settled_at = created_at
 		WHERE settled_at IS NULL AND status IN (?, ?)`,
-		StatusWritten, StatusDiscarded)
-	return err
+		StatusWritten, StatusDiscarded); err != nil {
+		return err
+	}
+
+	// Lift pre-existing Google Sheets users into the generalized destinations
+	// model. Runs after createAuthTables, so both tables are guaranteed present.
+	return backfillDestinations(db)
 }
 
 func (s *Store) Close() error { return s.db.Close() }

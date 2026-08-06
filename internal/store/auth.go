@@ -52,20 +52,6 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
-// UserSheet is a user's single lead destination. CreatedByApp distinguishes an
-// auto-created sheet from one attached via the Google Picker. BrokenAt marks a
-// destination whose OAuth access was lost.
-type UserSheet struct {
-	UserID        int64
-	SpreadsheetID string
-	SheetTab      string
-	CreatedByApp  bool
-	ConnectedAt   time.Time
-	BrokenAt      time.Time
-}
-
-func (s *UserSheet) Broken() bool { return !s.BrokenAt.IsZero() }
-
 // AuthTokenKind is the purpose of a single-use token.
 type AuthTokenKind string
 
@@ -122,7 +108,10 @@ func createAuthTables(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash ON auth_tokens(token_hash);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return createDestinationTable(db)
 }
 
 // --- users ---
@@ -339,61 +328,10 @@ func (s *Store) DeleteOAuthAccount(ctx context.Context, userID int64, provider s
 	return err
 }
 
-// --- user sheets ---
-
-// SetUserSheet sets (or replaces) the user's single lead destination, clearing
-// any broken state.
-func (s *Store) SetUserSheet(ctx context.Context, sh *UserSheet) error {
-	if sh.ConnectedAt.IsZero() {
-		sh.ConnectedAt = time.Now().UTC()
-	}
-	createdByApp := 0
-	if sh.CreatedByApp {
-		createdByApp = 1
-	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO user_sheets (user_id, spreadsheet_id, sheet_tab, created_by_app, connected_at, broken_at)
-		VALUES (?, ?, ?, ?, ?, NULL)
-		ON CONFLICT(user_id) DO UPDATE SET
-			spreadsheet_id = excluded.spreadsheet_id,
-			sheet_tab      = excluded.sheet_tab,
-			created_by_app = excluded.created_by_app,
-			connected_at   = excluded.connected_at,
-			broken_at      = NULL`,
-		sh.UserID, sh.SpreadsheetID, sh.SheetTab, createdByApp, sh.ConnectedAt.UTC().Format(time.RFC3339))
-	return err
-}
-
-// GetUserSheet returns the user's destination, or ErrNotFound.
-func (s *Store) GetUserSheet(ctx context.Context, userID int64) (*UserSheet, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT user_id, spreadsheet_id, sheet_tab, created_by_app, connected_at, broken_at
-		FROM user_sheets WHERE user_id = ?`, userID)
-	var sh UserSheet
-	var createdByApp int
-	var connectedAt string
-	var brokenAt sql.NullString
-	if err := row.Scan(&sh.UserID, &sh.SpreadsheetID, &sh.SheetTab, &createdByApp, &connectedAt, &brokenAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	sh.CreatedByApp = createdByApp != 0
-	sh.ConnectedAt, _ = time.Parse(time.RFC3339, connectedAt)
-	if brokenAt.Valid && brokenAt.String != "" {
-		sh.BrokenAt, _ = time.Parse(time.RFC3339, brokenAt.String)
-	}
-	return &sh, nil
-}
-
-// MarkSheetBroken flags the destination as unwritable (lost OAuth access).
-func (s *Store) MarkSheetBroken(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE user_sheets SET broken_at = COALESCE(broken_at, ?) WHERE user_id = ?`,
-		time.Now().UTC().Format(time.RFC3339), userID)
-	return err
-}
+// The legacy user_sheets table is created above but is no longer read or
+// written: destinations (see destination.go) is the generalized replacement,
+// and store.Open backfills it from user_sheets on first boot. The old table is
+// retained so rolling back to the previous binary stays a binary swap.
 
 // --- single-use auth tokens (email verify, password reset) ---
 

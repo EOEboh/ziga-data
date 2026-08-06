@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/EOEboh/ziga-data/internal/auth"
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/store"
 	"golang.org/x/oauth2"
@@ -179,7 +180,7 @@ func (s *Server) storeGoogleTokens(ctx context.Context, uid int64, sub string, t
 }
 
 // handleGoogleDisconnect removes the current user's Google link and marks their
-// sheet destination unwritable (its access came from this grant).
+// destination unwritable (its access came from this grant).
 func (s *Server) handleGoogleDisconnect(w http.ResponseWriter, r *http.Request) {
 	uid := userID(r)
 	if err := s.store.DeleteOAuthAccount(r.Context(), uid, googleProvider); err != nil {
@@ -187,8 +188,13 @@ func (s *Server) handleGoogleDisconnect(w http.ResponseWriter, r *http.Request) 
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := s.store.MarkSheetBroken(r.Context(), uid); err != nil {
-		s.log.Error("mark sheet broken on disconnect", "err", err)
+	// Only a Google-backed destination loses its access here; a destination on
+	// another provider is unaffected by dropping the Google link.
+	if dest, derr := s.store.GetDestination(r.Context(), uid); derr == nil &&
+		destination.Type(dest.Type) == destination.TypeGoogleSheet {
+		if err := s.store.MarkDestinationBroken(r.Context(), uid); err != nil {
+			s.log.Error("mark destination broken on disconnect", "err", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "disconnected"})
 }

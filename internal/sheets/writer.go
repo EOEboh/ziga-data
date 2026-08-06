@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
@@ -44,13 +45,17 @@ func NewWriter(ctx context.Context, credsPath, sheetID, tab string, header []str
 
 const maxAttempts = 3
 
-// Append adds one row after the existing data on the configured tab. In
-// header mode, an empty tab gets the header row written first.
-func (w *Writer) Append(ctx context.Context, row []string) error {
+// Write appends one lead as a row after the existing data on the configured
+// tab, implementing destination.Writer. In header mode, an empty tab gets the
+// header row written first.
+//
+// A sheet has a column for every schema field by construction, so no field is
+// ever dropped and the returned Result is always empty.
+func (w *Writer) Write(ctx context.Context, lead destination.Lead) (destination.Result, error) {
 	if err := w.ensureHeader(ctx); err != nil {
-		return err
+		return destination.Result{}, err
 	}
-	return w.appendRow(ctx, row)
+	return destination.Result{}, w.appendRow(ctx, lead.Values())
 }
 
 // ensureHeader checks the tab once per process; a transient failure leaves

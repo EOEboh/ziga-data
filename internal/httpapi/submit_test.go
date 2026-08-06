@@ -19,6 +19,7 @@ import (
 
 	"github.com/EOEboh/ziga-data/internal/auth"
 	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
@@ -42,19 +43,20 @@ func (f *fakeExtractor) Extract(_ context.Context, _ llm.Input) (*llm.Result, er
 }
 
 type fakeWriter struct {
-	rows [][]string
-	err  error
+	rows    [][]string
+	err     error
+	dropped []string // fields the destination could not accept
 }
 
-func (f *fakeWriter) Append(_ context.Context, row []string) error {
+func (f *fakeWriter) Write(_ context.Context, lead destination.Lead) (destination.Result, error) {
 	if f.err != nil {
-		return f.err
+		return destination.Result{}, f.err
 	}
-	f.rows = append(f.rows, row)
-	return nil
+	f.rows = append(f.rows, lead.Values())
+	return destination.Result{Dropped: f.dropped}, nil
 }
 
-func (f *fakeWriter) LastRows(_ context.Context, n int) ([][]string, error) {
+func (f *fakeWriter) Recent(_ context.Context, n int) ([][]string, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -79,7 +81,7 @@ func goodResult() *llm.Result {
 	}
 }
 
-func testServer(t *testing.T, ex llm.Extractor, w RowWriter) *Server {
+func testServer(t *testing.T, ex llm.Extractor, w destination.Writer) *Server {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

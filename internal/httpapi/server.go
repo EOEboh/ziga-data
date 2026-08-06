@@ -3,7 +3,6 @@
 package httpapi
 
 import (
-	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
 	"github.com/EOEboh/ziga-data/internal/oauth"
@@ -19,19 +19,15 @@ import (
 	"google.golang.org/api/option"
 )
 
-// RowWriter appends rows to the destination sheet and reads the tail back
-// for the preview strip. Implemented by the sheets package; stubbed in tests.
-type RowWriter interface {
-	Append(ctx context.Context, row []string) error
-	LastRows(ctx context.Context, n int) ([][]string, error)
-}
-
 type Server struct {
 	cfg       *config.Config
 	log       *slog.Logger
 	extractor llm.Extractor
 	store     *store.Store
-	writer    RowWriter
+	// writer is the process-wide fallback destination, used only in dev /
+	// dry-run mode; every real write goes through a per-user writer resolved
+	// by writerFor.
+	writer destination.Writer
 	mailer    mail.Mailer
 	oauth     *oauth.Config
 	// box encrypts OAuth tokens at rest; nil when Google OAuth is unconfigured.
@@ -58,7 +54,7 @@ type Server struct {
 	baseURL       string
 }
 
-func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter, m mail.Mailer, oc *oauth.Config, box *secretbox.Box) *Server {
+func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w destination.Writer, m mail.Mailer, oc *oauth.Config, box *secretbox.Box) *Server {
 	return &Server{
 		cfg: cfg, log: log, extractor: ex, store: st, writer: w, mailer: m, oauth: oc, box: box,
 		limiter:       newIPLimiter(cfg.RatePerMin),

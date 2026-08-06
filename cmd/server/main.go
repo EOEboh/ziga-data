@@ -16,6 +16,7 @@ import (
 
 	ziga "github.com/EOEboh/ziga-data"
 	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/httpapi"
 	"github.com/EOEboh/ziga-data/internal/llm"
@@ -29,9 +30,9 @@ import (
 // dryRunWriter stands in for Google Sheets when SHEET_ID or credentials are
 // not configured: an in-memory sheet, so the full submit → confirm → preview
 // flow works locally. Rows are lost on restart. A cell containing the literal
-// "[fail]" makes Append error, to exercise the UI's failed-write path. It
+// "[fail]" makes Write error, to exercise the UI's failed-write path. It
 // mirrors the real writer's header semantics: with header set, the first
-// append into the empty sheet writes the header row first, and LastRows
+// append into the empty sheet writes the header row first, and Recent
 // skips it.
 type dryRunWriter struct {
 	log    *slog.Logger
@@ -40,10 +41,11 @@ type dryRunWriter struct {
 	rows   [][]string
 }
 
-func (d *dryRunWriter) Append(_ context.Context, row []string) error {
+func (d *dryRunWriter) Write(_ context.Context, lead destination.Lead) (destination.Result, error) {
+	row := lead.Values()
 	for _, cell := range row {
 		if strings.Contains(cell, "[fail]") {
-			return errors.New("dry-run: simulated sheet failure ([fail] marker in a cell)")
+			return destination.Result{}, errors.New("dry-run: simulated sheet failure ([fail] marker in a cell)")
 		}
 	}
 	d.mu.Lock()
@@ -53,10 +55,10 @@ func (d *dryRunWriter) Append(_ context.Context, row []string) error {
 	}
 	d.rows = append(d.rows, row)
 	d.log.Info("dry-run: row stored in memory, sheets not configured", "row", row)
-	return nil
+	return destination.Result{}, nil
 }
 
-func (d *dryRunWriter) LastRows(_ context.Context, n int) ([][]string, error) {
+func (d *dryRunWriter) Recent(_ context.Context, n int) ([][]string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rows := d.rows
@@ -155,7 +157,7 @@ func main() {
 	// (Server.writerFor uses per-user writers otherwise). So when OAuth is
 	// configured this is an unused placeholder, and the dry-run warning would be
 	// misleading — only emit it when the fallback can actually be reached.
-	var writer httpapi.RowWriter
+	var writer destination.Writer
 	switch {
 	case cfg.SheetID != "" && cfg.GoogleCredsPath != "":
 		writer, err = sheets.NewWriter(context.Background(), cfg.GoogleCredsPath, cfg.SheetID, cfg.SheetTab, header)

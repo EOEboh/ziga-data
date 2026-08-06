@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/store"
@@ -203,19 +204,23 @@ func (s *Server) submissionResponse(sub *store.Submission, duplicate bool) submi
 	return resp
 }
 
-// buildRow maps the result to sheet columns per config — no field names
-// hardcoded. The synthetic "flags" column carries review-worthy notices.
-func (s *Server) buildRow(res *llm.Result, flags []string) []string {
-	row := make([]string, 0, len(s.cfg.Schema.Columns))
+// buildLead maps the result to the schema's columns per config — no field
+// names hardcoded. The synthetic "flags" column carries review-worthy notices.
+//
+// Cells stay in column order, which is the row a sheet writes directly; each
+// cell also carries its field name, which is what a property-oriented
+// destination like Notion maps on.
+func (s *Server) buildLead(res *llm.Result, flags []string) destination.Lead {
+	cells := make([]destination.Cell, 0, len(s.cfg.Schema.Columns))
 	for _, col := range s.cfg.Schema.Columns {
 		if col == "flags" {
-			row = append(row, strings.Join(flags, "; "))
+			cells = append(cells, destination.Cell{Field: col, Value: strings.Join(flags, "; ")})
 			continue
 		}
 		val, _ := res.Field(col)
-		row = append(row, val)
+		cells = append(cells, destination.Cell{Field: col, Value: val})
 	}
-	return row
+	return destination.Lead{Cells: cells}
 }
 
 // excerpt keeps a short preview for queue and history listings.

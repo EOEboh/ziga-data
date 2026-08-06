@@ -45,8 +45,16 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 // pointed at a fake Google, with token encryption enabled.
 func newGoogleTest(t *testing.T) (*authTest, *fakeGoogle) {
 	t.Helper()
+	return newGoogleTestAt(t, filepath.Join(t.TempDir(), "oauth.db"))
+}
+
+// newGoogleTestAt is newGoogleTest against a specific database file, so a test
+// can seed a database the way an older build left it and then have the server
+// open (and migrate) it.
+func newGoogleTestAt(t *testing.T, dbPath string) (*authTest, *fakeGoogle) {
+	t.Helper()
 	fg := newFakeGoogle(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "oauth.db"))
+	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
