@@ -492,3 +492,101 @@ func TestGoogleDisconnectLeavesNotionDestinationHealthy(t *testing.T) {
 		t.Fatal("disconnecting Google must not break a Notion destination")
 	}
 }
+
+// A broken destination is still a configured one. The distinction matters:
+// onboarding gates on "configured", so a user whose access was revoked stays
+// in the app with a reconnect prompt instead of being sent back through setup,
+// and can keep submitting and reviewing meanwhile.
+func TestBrokenDestinationStaysConfigured(t *testing.T) {
+	a, _, uid := newConnectedNotionTest(t)
+	ctx := context.Background()
+
+	if rec := a.do("POST", "/api/notion/destination",
+		map[string]any{"database_id": "db-granted"}, true); rec.Code != 200 {
+		t.Fatalf("set destination code=%d", rec.Code)
+	}
+	if !a.s.destinationConnected(ctx, uid) || !a.s.destinationConfigured(ctx, uid) {
+		t.Fatal("a fresh destination must read as both connected and configured")
+	}
+
+	a.s.markNotionBroken(ctx, uid)
+
+	if a.s.destinationConnected(ctx, uid) {
+		t.Fatal("a broken destination must not read as connected")
+	}
+	if !a.s.destinationConfigured(ctx, uid) {
+		t.Fatal("a broken destination must still read as configured, not send the user back to setup")
+	}
+
+	// /api/me reports the two states separately, which is what the SPA routes on.
+	rec := a.do("GET", "/api/me", nil, true)
+	me := decodeJSON(t, rec)
+	if me["destination_connected"] != false {
+		t.Fatalf("destination_connected = %v, want false", me["destination_connected"])
+	}
+	if me["destination_configured"] != true {
+		t.Fatalf("destination_configured = %v, want true", me["destination_configured"])
+	}
+
+	// Submitting and reviewing still work with an unwritable destination; only
+	// the write is blocked.
+	if rec := a.do("GET", "/api/queue", nil, true); rec.Code != 200 {
+		t.Fatalf("queue with a broken destination: code=%d, want 200", rec.Code)
+	}
+}
+
+// The preview strip reads back from Notion, so a Notion user sees their recent
+// leads rather than an empty strip.
+func TestPreviewReadsFromNotion(t *testing.T) {
+	a, _, _ := newConnectedNotionTest(t)
+
+	if rec := a.do("POST", "/api/notion/databases/create",
+		map[string]string{"parent_page_id": "page-granted"}, true); rec.Code != 200 {
+		t.Fatalf("create database code=%d", rec.Code)
+	}
+	rec := a.do("GET", "/api/preview", nil, true)
+	if rec.Code != 200 {
+		t.Fatalf("preview code=%d", rec.Code)
+	}
+	resp := decodeJSON(t, rec)
+	cols, _ := resp["columns"].([]any)
+	if len(cols) != len(a.s.cfg.Schema.Columns) {
+		t.Fatalf("columns = %v, want the schema's columns", cols)
+	}
+	if _, isErr := resp["error"]; isErr {
+		t.Fatalf("preview reported an error: %v", resp["error"])
+	}
+}
+
+// The destination picker lists Notion as a real, selectable alternative rather
+// than a disabled "coming soon" entry, and marks a provider unavailable only
+// when the server has no integration configured for it.
+func TestDestinationListOffersNotion(t *testing.T) {
+	a, _, _ := newConnectedNotionTest(t)
+	rec := a.do("GET", "/api/destination", nil, true)
+	resp := decodeJSON(t, rec)
+	list, _ := resp["destinations"].([]any)
+
+	var notion map[string]any
+	for _, d := range list {
+		m, _ := d.(map[string]any)
+		if m["type"] == "notion" {
+			notion = m
+		}
+	}
+	if notion == nil {
+		t.Fatalf("Notion missing from the destination list: %v", list)
+	}
+	if notion["disabled"] == true || notion["unavailable"] == true {
+		t.Fatalf("Notion is configured and must be selectable: %+v", notion)
+	}
+
+	// Google is not configured on this test server, so it is offered but
+	// marked unavailable rather than silently missing.
+	for _, d := range list {
+		m, _ := d.(map[string]any)
+		if m["type"] == "google_sheet" && m["active"] != true && m["unavailable"] != true {
+			t.Fatalf("an unconfigured provider must be marked unavailable: %+v", m)
+		}
+	}
+}
