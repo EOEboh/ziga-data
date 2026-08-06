@@ -217,8 +217,19 @@ From then on every confirmed row is appended to that user's sheet using their ow
 Optional. With the `NOTION_OAUTH_*` variables unset, Notion is simply not offered and every `/api/notion/*` route returns 404.
 
 1. In the [Notion developer portal](https://app.notion.com/developers/connections), create a **public connection**. Notion renamed these from "integrations" — the OAuth credentials live on the **Configuration** tab. Only a *public* connection speaks OAuth; an *internal* connection uses a static token and cannot serve other people's workspaces.
-2. Register the redirect URI on the connection — it must match `NOTION_OAUTH_REDIRECT_URL` exactly, including scheme and port.
-3. Set `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URL`, and `TOKEN_ENCRYPTION_KEY`.
+2. Set the **installation scope to "Any workspace"**. This is fixed at creation and cannot be changed afterwards, and "selected workspaces only" would stop other people's workspaces from connecting at all.
+3. Register the redirect URI on the connection — it must match `NOTION_OAUTH_REDIRECT_URL` exactly, including scheme and port.
+4. Grant exactly these capabilities, which are what the code actually uses:
+
+   | Capability | Needed for |
+   |---|---|
+   | **Read content** | `POST /search` (the granted databases and pages), `GET /databases/{id}` → data source, `GET /data_sources/{id}` → the property schema, `POST /data_sources/{id}/query` (preview strip) |
+   | **Insert content** | `POST /pages` (writing a lead), `POST /databases` (auto-creating "Ziga Leads") |
+   | **Update content** | `PATCH /data_sources/{id}` — only ever used to add a missing `select` option before retrying a write. Without it, a lead whose `source` value the property has not seen fails instead of being repaired |
+   | **No user information** | The app never calls `/users`. Workspace identity comes from the token response, so there is no reason to ask for user data |
+
+   Comment capabilities are not needed.
+5. Set `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URL`, and `TOKEN_ENCRYPTION_KEY`.
 
 > **A public connection must be submitted for review before its OAuth flow goes live.** Notion populates the connection's Authorization URL only after submission, so plan for that lead time before a public launch — and see [Verifying against a real workspace](#verifying-against-a-real-workspace) for what can be tested before then.
 
@@ -226,9 +237,18 @@ Optional. With the `NOTION_OAUTH_*` variables unset, Notion is simply not offere
 
 ### What a Notion user then does
 
-1. Picks Notion as their destination, and is sent to Notion's consent screen where they tick exactly which pages and databases to share.
-2. Either lets Ziga **create a "Ziga Leads" database** (the safe default — the app owns the schema, so every field has a home of the right type and nothing can be dropped), or **picks an existing database**.
-3. For an existing database, reviews the **field→property mapping** and adjusts it before saving.
+The user creates nothing in Notion — no connection, no API key. They only grant access to pages they already have.
+
+1. Picks Notion as their destination in Ziga and clicks **Connect Notion**.
+2. On Notion's screen: approves the capabilities, then uses the **page picker** to select which pages and databases to share. Notion only lists resources the user has *full access* to, so a page shared with them at comment- or read-level will not appear.
+3. **What they pick determines their options in the next step:**
+   - shared at least one **page** → Ziga can create a "Ziga Leads" database inside it
+   - shared at least one **database** → they can use that database instead
+   - shared only databases → the create option is unavailable, and Ziga says so rather than failing
+   - shared nothing usable → Ziga tells them to reconnect and grant something
+4. Back in Ziga: either lets it **create a "Ziga Leads" database** (the safe default — the app owns the schema, so every field has a home of the right type and nothing can be dropped), or **picks an existing database** and reviews the **field→property mapping** before saving.
+
+Access is revocable from the user's side at any time, in Notion's own settings. Ziga detects the revocation on the next write and prompts a reconnect rather than failing silently.
 
 ### Verifying against a real workspace
 
