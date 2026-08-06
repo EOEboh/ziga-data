@@ -118,7 +118,7 @@ var errLinkUnverified = errors.New("account exists but is unverified")
 //   - email matches an unverified account -> refuse (errLinkUnverified)
 //   - no match -> create a new (Google-verified) account
 func (s *Server) resolveGoogleUser(ctx context.Context, info *oauth.UserInfo) (int64, string, error) {
-	if acct, err := s.store.GetOAuthAccountBySub(ctx, info.Sub); err == nil {
+	if acct, err := s.store.GetOAuthAccountBySub(ctx, googleProvider, info.Sub); err == nil {
 		return acct.UserID, "/", nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return 0, "", err
@@ -171,7 +171,7 @@ func (s *Server) storeGoogleTokens(ctx context.Context, uid int64, sub string, t
 	return s.store.UpsertOAuthAccount(ctx, &store.OAuthAccount{
 		UserID:          uid,
 		Provider:        googleProvider,
-		GoogleSub:       sub,
+		ProviderSub:     sub,
 		AccessTokenEnc:  accessEnc,
 		RefreshTokenEnc: refreshEnc,
 		TokenExpiry:     tok.Expiry,

@@ -178,3 +178,95 @@ func TestRetentionDays(t *testing.T) {
 		}
 	}
 }
+
+// Notion is all-or-nothing: a half-set integration must refuse to boot rather
+// than advertise a "Connect Notion" flow that dies at the callback. This is the
+// same failure mode the Google OAuth guard exists to prevent.
+func TestNotionPartialConfigRefusesToBoot(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		set     map[string]string
+		missing string
+	}{
+		{"only client id", map[string]string{
+			"NOTION_OAUTH_CLIENT_ID": "abc",
+		}, "NOTION_OAUTH_CLIENT_SECRET"},
+		{"missing redirect", map[string]string{
+			"NOTION_OAUTH_CLIENT_ID":     "abc",
+			"NOTION_OAUTH_CLIENT_SECRET": "shh",
+		}, "NOTION_OAUTH_REDIRECT_URL"},
+		{"missing secret", map[string]string{
+			"NOTION_OAUTH_CLIENT_ID":    "abc",
+			"NOTION_OAUTH_REDIRECT_URL": "http://localhost:8080/api/notion/callback",
+		}, "NOTION_OAUTH_CLIENT_SECRET"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			t.Setenv("OPENAI_API_KEY", "sk-test")
+			for k, v := range tc.set {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if err == nil {
+				t.Fatal("partial Notion configuration must fail at boot")
+			}
+			if !strings.Contains(err.Error(), tc.missing) {
+				t.Fatalf("error must name the missing var %q, got: %v", tc.missing, err)
+			}
+		})
+	}
+}
+
+// No Notion vars at all is a supported configuration: Notion is simply not
+// offered, and the app boots normally.
+func TestNotionUnconfiguredBootsCleanly(t *testing.T) {
+	setup(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("no Notion configuration must boot cleanly: %v", err)
+	}
+	if cfg.NotionConfigured() {
+		t.Fatal("Notion must not report as configured")
+	}
+	if cfg.NotionVersion != DefaultNotionVersion {
+		t.Fatalf("NotionVersion = %q, want the pinned default", cfg.NotionVersion)
+	}
+}
+
+func TestNotionFullyConfiguredRequiresEncryptionKey(t *testing.T) {
+	setup(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("NOTION_OAUTH_CLIENT_ID", "abc")
+	t.Setenv("NOTION_OAUTH_CLIENT_SECRET", "shh")
+	t.Setenv("NOTION_OAUTH_REDIRECT_URL", "http://localhost:8080/api/notion/callback")
+
+	// Notion tokens must never be stored in plaintext, so the key is required
+	// even when Google OAuth is off.
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TOKEN_ENCRYPTION_KEY") {
+		t.Fatalf("want a TOKEN_ENCRYPTION_KEY error, got %v", err)
+	}
+
+	t.Setenv("TOKEN_ENCRYPTION_KEY", "aGVsbG8taGVsbG8taGVsbG8taGVsbG8taGU=")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.NotionConfigured() {
+		t.Fatal("fully configured Notion must report as configured")
+	}
+}
+
+// The Notion-Version pin is overridable, since Notion versions by date.
+func TestNotionVersionOverridable(t *testing.T) {
+	setup(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("NOTION_VERSION", "2022-06-28")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NotionVersion != "2022-06-28" {
+		t.Fatalf("NotionVersion = %q, want the override", cfg.NotionVersion)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/EOEboh/ziga-data/internal/httpapi"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/notionauth"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/sheets"
@@ -186,6 +187,9 @@ func main() {
 	// Google OAuth (identity + drive.file) and token encryption. When OAuth is
 	// unconfigured (dev) the box stays nil and the OAuth routes report 404.
 	oauthCfg := oauth.NewConfig(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.OAuthRedirectURL)
+	// Notion OAuth (public integration). config.Load has already refused to
+	// boot on partial configuration, so this is either fully set or fully off.
+	notionCfg := notionauth.NewConfig(cfg.NotionOAuthClientID, cfg.NotionOAuthClientSecret, cfg.NotionOAuthRedirectURL)
 	var box *secretbox.Box
 	if cfg.TokenEncryptionKey != "" {
 		box, err = secretbox.New(cfg.TokenEncryptionKey)
@@ -197,6 +201,11 @@ func main() {
 	if oauthCfg.Configured() {
 		log.Info("google oauth enabled", "scopes", oauthCfg.Scopes())
 	}
+	if notionCfg.Configured() {
+		log.Info("notion oauth enabled", "notion_version", cfg.NotionVersion, "redirect", notionCfg.RedirectURL())
+	} else {
+		log.Info("notion oauth not configured — Notion will not be offered as a destination")
+	}
 
 	static, err := fs.Sub(ziga.WebFS, "web/dist")
 	if err != nil {
@@ -204,7 +213,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, box)
+	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, notionCfg, box)
 	addr := ":" + cfg.Port
 	log.Info("listening", "addr", addr, "model", cfg.LLMModel, "schema", cfg.Schema.Name)
 	if err := http.ListenAndServe(addr, srv.Handler(static)); err != nil {

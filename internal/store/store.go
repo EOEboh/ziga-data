@@ -151,9 +151,50 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	if err := migrateOAuthAccounts(db); err != nil {
+		return err
+	}
+
 	// Lift pre-existing Google Sheets users into the generalized destinations
 	// model. Runs after createAuthTables, so both tables are guaranteed present.
 	return backfillDestinations(db)
+}
+
+// migrateOAuthAccounts generalizes the oauth_accounts table from Google-only
+// to any provider: google_sub becomes provider_sub, since the column now also
+// holds a Notion bot id. Databases created by this build already have the new
+// name (createAuthTables), so the rename only fires on an older file — hence
+// the PRAGMA check, mirroring migrate() above.
+func migrateOAuthAccounts(db *sql.DB) error {
+	have, err := columns(db, "oauth_accounts")
+	if err != nil {
+		return err
+	}
+	if have["google_sub"] && !have["provider_sub"] {
+		if _, err := db.Exec(`ALTER TABLE oauth_accounts RENAME COLUMN google_sub TO provider_sub`); err != nil {
+			return fmt.Errorf("rename google_sub: %w", err)
+		}
+	}
+	return nil
+}
+
+// columns returns the column names of a table, for the ADD/RENAME COLUMN
+// guards above (SQLite has no IF NOT EXISTS for either).
+func columns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		have[name] = true
+	}
+	return have, rows.Err()
 }
 
 func (s *Store) Close() error { return s.db.Close() }

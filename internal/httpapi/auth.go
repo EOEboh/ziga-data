@@ -249,6 +249,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			"google_client_id":      s.googleClientID(),
 			"google_picker_api_key": s.cfg.GooglePickerAPIKey,
 			"google_project_number": s.cfg.GoogleProjectNumber,
+			"notion_oauth":          s.notionEnabled(),
 		},
 	}
 	uid, ok := s.sessionUser(r)
@@ -268,6 +269,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	resp["authenticated"] = true
 	resp["user"] = toUserJSON(u)
 	resp["google_connected"] = s.googleConnected(r, uid)
+	resp["notion_connected"] = s.notionConnected(r.Context(), uid)
 	resp["destination_connected"] = s.destinationConnected(r.Context(), uid)
 	// sheet_connected is the pre-generalization name for the same thing, kept
 	// until the frontend moves over to destination_connected.

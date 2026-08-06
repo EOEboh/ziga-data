@@ -216,3 +216,61 @@ func TestBackfillOnFreshDatabase(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
+
+// TestMigrateOAuthAccountsRenamesGoogleSub covers the oauth_accounts
+// generalization on a live database: a file written when the column was
+// google_sub must come up with provider_sub, keeping every existing link
+// readable. Losing this would sign every Google user out.
+func TestMigrateOAuthAccountsRenamesGoogleSub(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth-legacy.db")
+	ctx := context.Background()
+
+	// A database as an older build left it: the column is still google_sub.
+	func() {
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.db.Exec(`ALTER TABLE oauth_accounts RENAME COLUMN provider_sub TO google_sub`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`
+			INSERT INTO oauth_accounts (user_id, provider, google_sub, access_token_enc,
+				refresh_token_enc, token_expiry, scopes, connected_at, broken_at)
+			VALUES (7, 'google', 'sub-123', ?, ?, NULL, 'openid', ?, NULL)`,
+			[]byte("enc-access"), []byte("enc-refresh"),
+			time.Now().UTC().Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st.Close()
+
+	acct, err := st.GetOAuthAccount(ctx, 7, "google")
+	if err != nil {
+		t.Fatalf("existing google link lost by the rename: %v", err)
+	}
+	if acct.ProviderSub != "sub-123" || string(acct.AccessTokenEnc) != "enc-access" {
+		t.Fatalf("link not preserved: %+v", acct)
+	}
+	// Sign-in lookup by subject still resolves.
+	bySub, err := st.GetOAuthAccountBySub(ctx, "google", "sub-123")
+	if err != nil || bySub.UserID != 7 {
+		t.Fatalf("lookup by sub: %+v err=%v", bySub, err)
+	}
+	// A Notion link never satisfies a Google sign-in lookup, even with the
+	// same subject value.
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: 8, Provider: "notion", ProviderSub: "bot-123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetOAuthAccountBySub(ctx, "google", "bot-123"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a notion link must not satisfy a google sign-in, got %v", err)
+	}
+}

@@ -84,14 +84,41 @@ type Config struct {
 	// without it the server's stored token cannot read the picked spreadsheet.
 	GoogleProjectNumber string
 	// TokenEncryptionKey (base64, 32 bytes) encrypts OAuth tokens at rest.
-	// Required whenever Google OAuth is configured.
+	// Required whenever any OAuth provider is configured.
 	TokenEncryptionKey string
+
+	// Notion OAuth (public integration). When these are empty, Notion is not
+	// offered as a destination at all; partially set is a boot error, so a
+	// typo can never advertise a flow that cannot complete.
+	NotionOAuthClientID     string
+	NotionOAuthClientSecret string
+	NotionOAuthRedirectURL  string
+	// NotionVersion is the Notion-Version header sent on every Notion API
+	// request. Notion versions by date and pins behavior to the version
+	// string, so it lives here as one value rather than at the call sites.
+	NotionVersion string
 }
 
 // OAuthConfigured reports whether Google OAuth credentials are present.
 func (c *Config) OAuthConfigured() bool {
 	return c.GoogleOAuthClientID != "" && c.GoogleOAuthClientSecret != ""
 }
+
+// NotionConfigured reports whether Notion is fully configured and can be
+// offered as a destination. Load guarantees this is all-or-nothing.
+func (c *Config) NotionConfigured() bool {
+	return c.NotionOAuthClientID != "" && c.NotionOAuthClientSecret != "" && c.NotionOAuthRedirectURL != ""
+}
+
+// DefaultNotionVersion is the Notion API version this build targets.
+//
+// Version 2025-09-03 introduced data sources: a database is a parent of one or
+// more data sources, the property schema lives on the data source, and pages
+// are created with a data_source_id parent. The older 2022-06-28 model is
+// simpler but Notion documents it as failing outright once a database gains a
+// second data source — which would break lead writes for a user who merely
+// restructured their database. This build targets the data-source model.
+const DefaultNotionVersion = "2026-03-11"
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -134,6 +161,11 @@ func Load() (*Config, error) {
 		GooglePickerAPIKey:      os.Getenv("GOOGLE_PICKER_API_KEY"),
 		GoogleProjectNumber:     os.Getenv("GOOGLE_PROJECT_NUMBER"),
 		TokenEncryptionKey:      os.Getenv("TOKEN_ENCRYPTION_KEY"),
+
+		NotionOAuthClientID:     os.Getenv("NOTION_OAUTH_CLIENT_ID"),
+		NotionOAuthClientSecret: os.Getenv("NOTION_OAUTH_CLIENT_SECRET"),
+		NotionOAuthRedirectURL:  os.Getenv("NOTION_OAUTH_REDIRECT_URL"),
+		NotionVersion:           envOr("NOTION_VERSION", DefaultNotionVersion),
 	}
 	switch v := strings.ToLower(os.Getenv("ZIGA_DEV_MODE")); v {
 	case "", "0", "false":
@@ -161,10 +193,36 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("Google OAuth is required unless ZIGA_DEV_MODE=true; missing: %s", strings.Join(missing, ", "))
 		}
 	}
-	// When Google OAuth is configured, the token-encryption key is mandatory —
-	// we must never store OAuth tokens in plaintext.
-	if cfg.OAuthConfigured() && cfg.TokenEncryptionKey == "" {
-		return nil, fmt.Errorf("TOKEN_ENCRYPTION_KEY is required when Google OAuth is configured")
+	// Notion is all-or-nothing. Offering "Connect Notion" in the UI and then
+	// failing at the callback because one var was misnamed is exactly the
+	// failure the Google guard above exists to prevent, so partial Notion
+	// configuration refuses to boot. Setting none of them is fine: Notion is
+	// then simply not offered.
+	notionVars := map[string]string{
+		"NOTION_OAUTH_CLIENT_ID":     cfg.NotionOAuthClientID,
+		"NOTION_OAUTH_CLIENT_SECRET": cfg.NotionOAuthClientSecret,
+		"NOTION_OAUTH_REDIRECT_URL":  cfg.NotionOAuthRedirectURL,
+	}
+	var setNotion, missingNotion []string
+	for _, name := range []string{"NOTION_OAUTH_CLIENT_ID", "NOTION_OAUTH_CLIENT_SECRET", "NOTION_OAUTH_REDIRECT_URL"} {
+		if notionVars[name] == "" {
+			missingNotion = append(missingNotion, name)
+		} else {
+			setNotion = append(setNotion, name)
+		}
+	}
+	if len(setNotion) > 0 && len(missingNotion) > 0 {
+		return nil, fmt.Errorf("Notion OAuth is partially configured (%s set); missing: %s",
+			strings.Join(setNotion, ", "), strings.Join(missingNotion, ", "))
+	}
+	if cfg.NotionVersion == "" {
+		return nil, fmt.Errorf("NOTION_VERSION must not be empty; Notion requires a version on every request")
+	}
+
+	// When any OAuth provider is configured, the token-encryption key is
+	// mandatory — we must never store OAuth tokens in plaintext.
+	if (cfg.OAuthConfigured() || cfg.NotionConfigured()) && cfg.TokenEncryptionKey == "" {
+		return nil, fmt.Errorf("TOKEN_ENCRYPTION_KEY is required when OAuth is configured")
 	}
 	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)

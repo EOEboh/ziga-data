@@ -23,6 +23,7 @@ import (
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/notionauth"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
@@ -102,7 +103,7 @@ func testServer(t *testing.T, ex llm.Extractor, w destination.Writer) *Server {
 			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
 		},
 	}
-	return New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), ex, st, w, &mail.FakeMailer{}, oauth.NewConfig("", "", ""), nil)
+	return New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), ex, st, w, &mail.FakeMailer{}, oauth.NewConfig("", "", ""), notionauth.NewConfig("", "", ""), nil)
 }
 
 const testUserEmail = "user@test.example"
@@ -372,7 +373,7 @@ func TestSubmitAndConfirmShareRateLimit(t *testing.T) {
 			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
 		},
 	}
-	s := New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, &mail.FakeMailer{}, oauth.NewConfig("", "", ""), nil)
+	s := New(cfg, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, &mail.FakeMailer{}, oauth.NewConfig("", "", ""), notionauth.NewConfig("", "", ""), nil)
 	h := handler(s)
 
 	rec, sub := postText(t, h, "Jane wants a logo, jane@x.com") // token 1

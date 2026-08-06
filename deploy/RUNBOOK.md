@@ -114,6 +114,57 @@ provider, note the mailer uses **STARTTLS on the submission port** (587). Port
 
 ---
 
+### a.2 Notion is optional for this deploy
+
+Notion is a second lead destination, offered as an alternative to Google Sheets.
+The `NOTION_OAUTH_*` lines ship **commented out**. Unlike the SMTP block, this is
+enforced rather than merely advised:
+
+- **All three or none.** If any one of `NOTION_OAUTH_CLIENT_ID`,
+  `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URL` is set and another is
+  not, the app **exits at boot** naming the missing ones. This is deliberate: a
+  misnamed variable must never produce a running process that offers a "Connect
+  Notion" button which then dies at the callback.
+- **None set is fully supported.** Notion is simply not offered; the destination
+  picker shows it as unavailable and every `/api/notion/*` route returns 404.
+  This is the current state of the deploy.
+- `TOKEN_ENCRYPTION_KEY` is **required** once Notion is configured. Notion access
+  tokens are encrypted at rest with the same AES-256-GCM key as Google's.
+
+To turn Notion on:
+
+1. Create a **public integration** at <https://www.notion.so/my-integrations>
+   (Notion calls this "Public integration" in the integration's Distribution
+   tab; a public integration is what allows other people's workspaces to
+   connect, and it is what the OAuth flow requires).
+2. Register the redirect URI on the integration. It must match
+   `NOTION_OAUTH_REDIRECT_URL` **exactly**, including scheme and port. For
+   staging behind the SSH tunnel that is
+   `http://localhost:8080/api/notion/callback`; in production it is
+   `https://app.zigadata.com/api/notion/callback`.
+3. Copy the OAuth client id and secret into `/opt/ziga/ziga.env`, uncommenting
+   all three lines.
+4. Restart and confirm the boot log:
+
+```bash
+sudo systemctl restart ziga
+sudo journalctl -u ziga -n 30 | grep -i notion
+# expect: "notion oauth enabled" with the notion_version and redirect
+```
+
+Users grant access **per resource**: on Notion's own consent screen they pick
+exactly which pages and databases the integration may touch. The app never asks
+for whole-workspace access — the same posture as `drive.file` on the Google side.
+
+**About `NOTION_VERSION`.** Notion pins API behavior to a dated version header
+sent on every request. The build default targets the current data-source model
+(a database parents one or more data sources; the property schema lives on the
+data source). Do not set this back to `2022-06-28`: Notion documents that
+version as failing outright on databases with more than one data source, which
+would break lead writes for a user who merely restructured their database.
+
+---
+
 ## b. First manual deploy
 
 **Build the Linux binary** on your workstation (pure-Go SQLite ⇒ no CGO needed;

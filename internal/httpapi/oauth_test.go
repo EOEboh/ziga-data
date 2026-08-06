@@ -13,6 +13,7 @@ import (
 
 	"github.com/EOEboh/ziga-data/internal/config"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/notionauth"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/store"
@@ -70,7 +71,7 @@ func newGoogleTestAt(t *testing.T, dbPath string) (*authTest, *fakeGoogle) {
 	oc := oauth.NewConfig(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, "http://localhost:8080/api/auth/google/callback")
 	oc.SetEndpoints(fg.server.URL+"/authorize", fg.server.URL+"/token", fg.server.URL+"/userinfo")
 	fake := &mail.FakeMailer{}
-	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, fake, oc, box)
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, fake, oc, notionauth.NewConfig("", "", ""), box)
 	a := &authTest{
 		t: t, s: s, mailbox: fake, cookies: map[string]string{},
 		h: s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}),
@@ -115,7 +116,7 @@ func TestGoogleCallbackCreatesVerifiedUser(t *testing.T) {
 		t.Fatalf("google user must exist and be verified: %+v err=%v", u, err)
 	}
 	// Tokens are stored encrypted; ciphertext must not contain the plaintext.
-	acct, err := a.s.store.GetOAuthAccountBySub(ctx, "google-1")
+	acct, err := a.s.store.GetOAuthAccountBySub(ctx, "google", "google-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestGoogleCallbackLinksVerifiedAccount(t *testing.T) {
 		t.Fatalf("callback code=%d", rec.Code)
 	}
 	// Linked to the SAME user, not a new one.
-	acct, err := a.s.store.GetOAuthAccountBySub(ctx, "google-2")
+	acct, err := a.s.store.GetOAuthAccountBySub(ctx, "google", "google-2")
 	if err != nil || acct.UserID != u.ID {
 		t.Fatalf("google identity must link to the existing verified user: %+v err=%v", acct, err)
 	}
@@ -165,7 +166,7 @@ func TestGoogleCallbackRefusesUnverifiedAccount(t *testing.T) {
 	if a.cookies[sessionCookie] != "" {
 		t.Fatal("no session may be started when linking is refused")
 	}
-	if _, err := a.s.store.GetOAuthAccountBySub(ctx, "google-3"); err == nil {
+	if _, err := a.s.store.GetOAuthAccountBySub(ctx, "google", "google-3"); err == nil {
 		t.Fatal("no oauth account should be created for a refused link")
 	}
 }
