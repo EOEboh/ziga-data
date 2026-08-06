@@ -37,11 +37,14 @@ type fakeNotionOAuth struct {
 
 func newFakeNotionOAuth(t *testing.T) *fakeNotionOAuth {
 	t.Helper()
+	// A distinct bot id per test: Notion issues one per workspace install, and
+	// the client's rate limiter is keyed by it, so sharing one across tests
+	// would serialize them all through a single 3-per-second budget.
 	f := &fakeNotionOAuth{
 		token: map[string]any{
 			"access_token":   "ntn-secret-token",
 			"token_type":     "bearer",
-			"bot_id":         "bot-1",
+			"bot_id":         "bot-" + t.Name(),
 			"workspace_id":   "ws-1",
 			"workspace_name": "Acme HQ",
 			"workspace_icon": "https://example.invalid/icon.png",
@@ -91,9 +94,15 @@ func newNotionTest(t *testing.T) (*authTest, *fakeNotionOAuth, int64) {
 		NotionOAuthClientSecret: "notion-secret",
 		NotionOAuthRedirectURL:  "http://localhost:8080/api/notion/callback",
 		NotionVersion:           config.DefaultNotionVersion,
+		// The real schema: the mapping flow is only meaningful across the full
+		// field set, and "flags" is the synthetic column the writer adds.
 		Schema: config.Schema{
-			Fields:  []config.Field{{Name: "need"}},
-			Columns: []string{"need"},
+			RequiredFields: []string{"contact", "need"},
+			Fields: []config.Field{
+				{Name: "name"}, {Name: "contact"}, {Name: "source"},
+				{Name: "need"}, {Name: "date"}, {Name: "notes"},
+			},
+			Columns: []string{"date", "name", "contact", "source", "need", "notes", "flags"},
 		},
 	}
 	nc := notionauth.NewConfig(cfg.NotionOAuthClientID, cfg.NotionOAuthClientSecret, cfg.NotionOAuthRedirectURL)
@@ -152,7 +161,7 @@ func TestNotionConnectStoresEncryptedToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("notion link not stored: %v", err)
 	}
-	if acct.ProviderSub != "bot-1" {
+	if acct.ProviderSub != "bot-"+t.Name() {
 		t.Fatalf("provider_sub = %q, want the bot id", acct.ProviderSub)
 	}
 

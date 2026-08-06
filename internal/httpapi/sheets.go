@@ -34,7 +34,7 @@ func (s *Server) googleEnabled() bool {
 // configured. When false the app is in dev / dry-run mode: there are no
 // per-user destinations and every write goes to the in-memory writer.
 func (s *Server) destinationsEnabled() bool {
-	return s.googleEnabled()
+	return s.googleEnabled() || s.notionEnabled()
 }
 
 // header is the column-name row to maintain, or nil in no-header mode.
@@ -68,6 +68,8 @@ func (s *Server) writerFor(ctx context.Context, uid int64) (destination.Writer, 
 	switch destination.Type(dest.Type) {
 	case destination.TypeGoogleSheet:
 		return s.sheetWriter(ctx, uid, dest)
+	case destination.TypeNotion:
+		return s.notionWriter(ctx, uid, dest)
 	default:
 		return nil, fmt.Errorf("unknown destination type %q", dest.Type)
 	}

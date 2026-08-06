@@ -10,6 +10,7 @@ import (
 
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/notion"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
 
@@ -120,6 +121,20 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("destination write failed", "id", id, "err", err)
 		if uerr := s.store.Update(ctx, uid, id, store.StatusFailedWrite, mergedJSON, err.Error()); uerr != nil {
 			s.log.Error("store update failed", "id", id, "err", uerr)
+		}
+		// A write that failed because access was revoked or the resource was
+		// never granted is not a transient error a retry can fix — it needs a
+		// reconnect. Mark the destination broken and say so, rather than
+		// leaving the user to hit "retry" forever.
+		if notion.NeedsReconnect(err) {
+			s.markNotionBroken(ctx, uid)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"id":              id,
+				"status":          store.StatusFailedWrite,
+				"error":           "Ziga has lost access to your Notion database. Reconnect Notion to write this lead",
+				"needs_reconnect": true,
+			})
+			return
 		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"id":     id,

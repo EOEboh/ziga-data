@@ -114,6 +114,10 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.Handle("GET /api/notion/start", protected(s.handleNotionStart))
 	mux.Handle("GET /api/notion/callback", protected(s.handleNotionCallback))
 	mux.Handle("POST /api/notion/disconnect", protected(s.handleNotionDisconnect))
+	mux.Handle("GET /api/notion/resources", protected(s.handleNotionResources))
+	mux.Handle("GET /api/notion/databases/{id}/mapping", protected(s.handleNotionMapping))
+	mux.Handle("POST /api/notion/databases/create", protected(s.handleNotionCreateDatabase))
+	mux.Handle("POST /api/notion/destination", protected(s.handleNotionSetDestination))
 
 	// Submission app (protected + user-scoped).
 	mux.Handle("POST /api/submit", s.rateLimit(protected(s.handleSubmit)))

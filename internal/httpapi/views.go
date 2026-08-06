@@ -68,12 +68,30 @@ func (s *Server) handleDestination(w http.ResponseWriter, r *http.Request) {
 }
 
 // destinationList describes the user's active destination plus the other
-// destination types they could switch to, for the picker.
+// destination types they could switch to, for the picker. An alternative is
+// disabled only when its provider is not configured on this server.
 func (s *Server) destinationList(r *http.Request, uid int64) []map[string]any {
-	return []map[string]any{
-		s.activeDestination(r, uid),
-		{"id": "notion", "label": "Notion", "type": "notion", "disabled": true, "coming_soon": true},
+	active := s.activeDestination(r, uid)
+	out := []map[string]any{active}
+
+	activeType, _ := active["type"].(string)
+	for _, alt := range []struct {
+		typ     destination.Type
+		label   string
+		enabled bool
+	}{
+		{destination.TypeGoogleSheet, "Google Sheets", s.googleEnabled()},
+		{destination.TypeNotion, "Notion", s.notionEnabled()},
+	} {
+		if string(alt.typ) == activeType {
+			continue // already listed as the active destination
+		}
+		out = append(out, map[string]any{
+			"id": string(alt.typ), "type": string(alt.typ), "label": alt.label,
+			"disabled": !alt.enabled, "unavailable": !alt.enabled,
+		})
 	}
+	return out
 }
 
 // activeDestination describes whichever destination the user currently writes
@@ -111,6 +129,23 @@ func (s *Server) activeDestination(r *http.Request, uid int64) map[string]any {
 		healthy := !dest.Broken() && s.googleConnected(r, uid)
 		out["label"] = cfg.SheetTab + " (Google Sheet)"
 		out["spreadsheet_id"] = cfg.SpreadsheetID
+		out["created_by_app"] = cfg.CreatedByApp
+		out["needs_reconnect"] = !healthy
+		out["connected"] = healthy
+	case destination.TypeNotion:
+		cfg, cerr := dest.NotionConfig()
+		if cerr != nil {
+			s.log.Error("decode notion destination", "err", cerr)
+			cfg = &store.NotionConfig{}
+		}
+		healthy := !dest.Broken() && s.notionConnected(r.Context(), uid)
+		title := cfg.DatabaseTitle
+		if title == "" {
+			title = "Untitled"
+		}
+		out["label"] = title + " (Notion)"
+		out["database_id"] = cfg.DatabaseID
+		out["database_title"] = cfg.DatabaseTitle
 		out["created_by_app"] = cfg.CreatedByApp
 		out["needs_reconnect"] = !healthy
 		out["connected"] = healthy
