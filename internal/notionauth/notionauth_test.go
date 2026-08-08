@@ -112,8 +112,12 @@ func TestExchangeUsesBasicAuthAndReturnsWorkspace(t *testing.T) {
 	if strings.Contains(gotBody, "secret-xyz") {
 		t.Fatalf("client secret leaked into the request body: %q", gotBody)
 	}
-	if !strings.Contains(gotBody, "redirect_uri") {
-		t.Fatalf("body = %q, want the redirect_uri Notion requires", gotBody)
+	// Notion requires redirect_uri in the exchange when the authorize URL
+	// carried one (this client always sends it), and rejects a malformed body.
+	// The config sets it and Exchange passes it again explicitly, so pin that
+	// this collapses to exactly one parameter rather than duplicating.
+	if n := strings.Count(gotBody, "redirect_uri="); n != 1 {
+		t.Fatalf("body has %d redirect_uri params, want exactly 1: %q", n, gotBody)
 	}
 }
 
