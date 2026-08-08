@@ -17,6 +17,7 @@ import (
 	"github.com/EOEboh/ziga-data/internal/auth"
 	"github.com/EOEboh/ziga-data/internal/config"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/notionauth"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
@@ -47,7 +48,7 @@ func newAuthTest(t *testing.T) *authTest {
 		},
 	}
 	fake := &mail.FakeMailer{}
-	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, fake, oauth.NewConfig("", "", ""), nil)
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), &fakeExtractor{result: goodResult()}, st, &fakeWriter{}, fake, oauth.NewConfig("", "", ""), notionauth.NewConfig("", "", ""), nil)
 	a := &authTest{
 		t: t, s: s, mailbox: fake, cookies: map[string]string{},
 		h: s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}),

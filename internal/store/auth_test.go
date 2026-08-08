@@ -87,7 +87,7 @@ func TestOAuthAccountRoundTrip(t *testing.T) {
 	u, _ := st.CreateUser(ctx, "o@example.com", "")
 
 	acct := &OAuthAccount{
-		UserID: u.ID, Provider: "google", GoogleSub: "google-123",
+		UserID: u.ID, Provider: "google", ProviderSub: "google-123",
 		AccessTokenEnc: []byte("enc-access"), RefreshTokenEnc: []byte("enc-refresh"),
 		TokenExpiry: time.Now().Add(time.Hour).UTC().Truncate(time.Second), Scopes: "openid email",
 	}
@@ -96,14 +96,14 @@ func TestOAuthAccountRoundTrip(t *testing.T) {
 	}
 
 	got, err := st.GetOAuthAccount(ctx, u.ID, "google")
-	if err != nil || string(got.AccessTokenEnc) != "enc-access" || got.GoogleSub != "google-123" {
+	if err != nil || string(got.AccessTokenEnc) != "enc-access" || got.ProviderSub != "google-123" {
 		t.Fatalf("get oauth: %+v err=%v", got, err)
 	}
 	if got.Broken() {
 		t.Fatal("fresh account must not be broken")
 	}
 
-	bySub, err := st.GetOAuthAccountBySub(ctx, "google-123")
+	bySub, err := st.GetOAuthAccountBySub(ctx, "google", "google-123")
 	if err != nil || bySub.UserID != u.ID {
 		t.Fatalf("get by sub: %+v err=%v", bySub, err)
 	}
@@ -136,38 +136,6 @@ func TestOAuthAccountRoundTrip(t *testing.T) {
 	}
 	if _, err := st.GetOAuthAccount(ctx, u.ID, "google"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted account should be ErrNotFound, got %v", err)
-	}
-}
-
-func TestUserSheetRoundTrip(t *testing.T) {
-	st := openTest(t)
-	ctx := context.Background()
-	u, _ := st.CreateUser(ctx, "sh@example.com", "")
-
-	if _, err := st.GetUserSheet(ctx, u.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("no sheet yet should be ErrNotFound, got %v", err)
-	}
-	if err := st.SetUserSheet(ctx, &UserSheet{UserID: u.ID, SpreadsheetID: "sheet-1", SheetTab: "Leads", CreatedByApp: true}); err != nil {
-		t.Fatal(err)
-	}
-	sh, err := st.GetUserSheet(ctx, u.ID)
-	if err != nil || sh.SpreadsheetID != "sheet-1" || !sh.CreatedByApp || sh.Broken() {
-		t.Fatalf("get sheet: %+v err=%v", sh, err)
-	}
-
-	// Switching sheets replaces and clears broken.
-	if err := st.MarkSheetBroken(ctx, u.ID); err != nil {
-		t.Fatal(err)
-	}
-	if sh, _ = st.GetUserSheet(ctx, u.ID); !sh.Broken() {
-		t.Fatal("sheet should be broken")
-	}
-	if err := st.SetUserSheet(ctx, &UserSheet{UserID: u.ID, SpreadsheetID: "sheet-2", SheetTab: "Leads", CreatedByApp: false}); err != nil {
-		t.Fatal(err)
-	}
-	sh, _ = st.GetUserSheet(ctx, u.ID)
-	if sh.SpreadsheetID != "sheet-2" || sh.CreatedByApp || sh.Broken() {
-		t.Fatalf("switch sheet not applied: %+v", sh)
 	}
 }
 

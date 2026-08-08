@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
 
@@ -37,7 +38,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"columns": cols, "rows": [][]string{}})
 		return
 	}
-	rows, err := writer.LastRows(r.Context(), previewRows)
+	rows, err := writer.Recent(r.Context(), previewRows)
 	if err != nil {
 		s.log.Error("preview read failed", "err", err)
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -61,36 +62,99 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 type dryRunner interface{ DryRun() bool }
 
 func (s *Server) handleDestination(w http.ResponseWriter, r *http.Request) {
-	uid := userID(r)
-	active := map[string]any{"id": "sheet", "type": "google_sheet", "active": true}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"destinations": s.destinationList(r, userID(r)),
+	})
+}
 
-	if !s.googleEnabled() {
+// destinationList describes the user's active destination plus the other
+// destination types they could switch to, for the picker. An alternative is
+// disabled only when its provider is not configured on this server.
+func (s *Server) destinationList(r *http.Request, uid int64) []map[string]any {
+	active := s.activeDestination(r, uid)
+	out := []map[string]any{active}
+
+	activeType, _ := active["type"].(string)
+	for _, alt := range []struct {
+		typ     destination.Type
+		label   string
+		enabled bool
+	}{
+		{destination.TypeGoogleSheet, "Google Sheets", s.googleEnabled()},
+		{destination.TypeNotion, "Notion", s.notionEnabled()},
+	} {
+		if string(alt.typ) == activeType {
+			continue // already listed as the active destination
+		}
+		out = append(out, map[string]any{
+			"id": string(alt.typ), "type": string(alt.typ), "label": alt.label,
+			"disabled": !alt.enabled, "unavailable": !alt.enabled,
+		})
+	}
+	return out
+}
+
+// activeDestination describes whichever destination the user currently writes
+// to, or the not-yet-connected state.
+func (s *Server) activeDestination(r *http.Request, uid int64) map[string]any {
+	if !s.destinationsEnabled() {
 		// Dev / dry-run: the in-memory sheet.
 		dry := false
 		if d, ok := s.writer.(dryRunner); ok && d.DryRun() {
 			dry = true
 		}
-		active["label"] = s.cfg.SheetTab + " (Google Sheet)"
-		active["dry_run"] = dry
-	} else if sheet, err := s.store.GetUserSheet(r.Context(), uid); err == nil {
-		active["label"] = sheet.SheetTab + " (Google Sheet)"
-		active["spreadsheet_id"] = sheet.SpreadsheetID
-		active["created_by_app"] = sheet.CreatedByApp
-		active["needs_reconnect"] = sheet.Broken() || !s.googleConnected(r, uid)
-		active["connected"] = !sheet.Broken() && s.googleConnected(r, uid)
-	} else {
-		// Authenticated but no destination yet (onboarding not finished).
-		active["label"] = "No sheet connected"
-		active["connected"] = false
-		active["needs_setup"] = true
+		return map[string]any{
+			"id": "sheet", "type": "google_sheet", "active": true,
+			"label": s.cfg.SheetTab + " (Google Sheet)", "dry_run": dry,
+		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"destinations": []map[string]any{
-			active,
-			{"id": "notion", "label": "Notion", "type": "notion", "disabled": true, "coming_soon": true},
-		},
-	})
+	dest, err := s.store.GetDestination(r.Context(), uid)
+	if err != nil {
+		// Authenticated but no destination yet (onboarding not finished).
+		return map[string]any{
+			"id": "sheet", "type": "google_sheet", "active": true,
+			"label": "No destination connected", "connected": false, "needs_setup": true,
+		}
+	}
+
+	out := map[string]any{"id": dest.Type, "type": dest.Type, "active": true}
+	switch destination.Type(dest.Type) {
+	case destination.TypeGoogleSheet:
+		cfg, cerr := dest.SheetConfig()
+		if cerr != nil {
+			s.log.Error("decode sheet destination", "err", cerr)
+			cfg = &store.SheetConfig{}
+		}
+		healthy := !dest.Broken() && s.googleConnected(r, uid)
+		out["label"] = cfg.SheetTab + " (Google Sheet)"
+		out["spreadsheet_id"] = cfg.SpreadsheetID
+		out["created_by_app"] = cfg.CreatedByApp
+		out["needs_reconnect"] = !healthy
+		out["connected"] = healthy
+	case destination.TypeNotion:
+		cfg, cerr := dest.NotionConfig()
+		if cerr != nil {
+			s.log.Error("decode notion destination", "err", cerr)
+			cfg = &store.NotionConfig{}
+		}
+		healthy := !dest.Broken() && s.notionConnected(r.Context(), uid)
+		title := cfg.DatabaseTitle
+		if title == "" {
+			title = "Untitled"
+		}
+		out["label"] = title + " (Notion)"
+		out["database_id"] = cfg.DatabaseID
+		out["database_title"] = cfg.DatabaseTitle
+		out["created_by_app"] = cfg.CreatedByApp
+		out["needs_reconnect"] = !healthy
+		out["connected"] = healthy
+	default:
+		out["label"] = dest.Type
+		out["needs_reconnect"] = dest.Broken()
+		out["connected"] = !dest.Broken()
+	}
+	return out
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

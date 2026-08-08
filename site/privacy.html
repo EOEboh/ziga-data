@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Privacy Policy | Ziga Data</title>
-  <meta name="description" content="How Ziga Data handles your Google account data, the leads you submit, and the Google Sheet you connect.">
+  <meta name="description" content="How Ziga Data handles connected Google and Notion data, the leads you submit, and the destination you choose.">
   <link rel="canonical" href="https://zigadata.com/privacy">
   <meta name="theme-color" content="#FAFAF8">
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -25,24 +25,25 @@
 
   <main id="main" class="legal">
     <h1>Privacy Policy</h1>
-    <p class="legal__updated">Last updated: 22 July 2026</p>
+    <p class="legal__updated">Last updated: 8 August 2026</p>
 
     <!-- ====================================================================
          OWNER REVIEW: everything between these markers is a working baseline
          written from what the application actually does today. It is accurate
-         as of the date above and is written to satisfy Google OAuth
-         verification. Review it, amend it, or replace it wholesale with your
+         as of the date above and is written to describe the Google and Notion
+         connections the application currently offers. Review it, amend it,
+         or replace it wholesale with your
          own counsel's wording.
 
          Before launch, confirm each of these still holds:
-           - the requested OAuth scopes (see "What we access in your Google
-             account") match the consent screen exactly
+           - the requested Google and Notion capabilities match their consent
+             screens exactly
            - the retention window matches the deployed RETENTION_DAYS setting
            - the subprocessor list is complete
            - hello@zigadata.com is receiving mail
          ==================================================================== -->
 
-    <p>Ziga Data is a tool for turning messy lead information into rows in a Google Sheet you own. This policy explains what we collect, why, and what we do not do. It covers the website at zigadata.com and the application at app.zigadata.com.</p>
+    <p>Ziga Data is a tool for turning messy lead information into records in a Google Sheet or Notion database you choose. This policy explains what we collect, why, and what we do not do. It covers the website at zigadata.com and the application at app.zigadata.com.</p>
 
     <p>Ziga Data is operated by CapEO Labs. If you have a question about anything here, write to <a href="mailto:hello@zigadata.com">hello@zigadata.com</a>.</p>
 
@@ -61,20 +62,35 @@
 
     <p>We never ask for permission to read your Gmail, your calendar, or your contacts.</p>
 
+    <h2>What we access in your Notion workspace</h2>
+
+    <p>When you connect Notion, Notion shows you a page picker. Ziga Data can access only the pages and databases you select there, not your whole workspace. The connection uses these capabilities:</p>
+
+    <ul>
+      <li><strong>Read content</strong> so we can list the pages and databases you granted, inspect the schema of a database you choose, and show recent lead records from that destination.</li>
+      <li><strong>Insert content</strong> so we can create a lead record after you confirm it, or create a new <em>Ziga Leads</em> database inside a page you selected.</li>
+      <li><strong>Update content</strong> only when needed to add a new option to a select property in the database you chose, so a confirmed lead can be saved.</li>
+    </ul>
+
+    <div class="legal__callout">
+      <p><strong>You choose the Notion resources we can access.</strong> We do not request Notion user-profile information or comment access. You can remove Ziga Data's access in Notion at any time.</p>
+    </div>
+
     <h2>What we store</h2>
 
     <ul>
-      <li><strong>Your account.</strong> Your email address, your Google account identifier, and the date you signed up. If you signed up with a password, we store a hash of it, never the password itself.</li>
+      <li><strong>Your account.</strong> Your email address, account identifiers needed to provide the service, and the date you signed up. If you signed up with a password, we store a hash of it, never the password itself.</li>
       <li><strong>Your Google connection.</strong> The access and refresh tokens Google issues so we can write to your sheet without asking you to sign in every time. These are encrypted at rest with AES-256-GCM before they touch our database.</li>
+      <li><strong>Your Notion connection.</strong> The Notion access token and, if Notion provides one, a refresh token, together with the connected installation identifier. These tokens are encrypted at rest with AES-256-GCM before they touch our database.</li>
       <li><strong>The leads you submit.</strong> The text or image you paste or upload, the fields extracted from it, and whether you confirmed or discarded it.</li>
-      <li><strong>Your destination.</strong> The identifier of the Google Sheet you connected, so we know where to write.</li>
+      <li><strong>Your destination.</strong> The identifier and configuration of the Google Sheet or Notion database you connected, so we know where to write.</li>
     </ul>
 
     <h2>How long we keep it</h2>
 
     <p>The raw material you submit is deleted on a schedule. Once a lead has been confirmed or discarded, we keep the full original text and any uploaded image for 14 days, then permanently delete them. What remains after that is the extracted fields and a short excerpt, so your history stays readable.</p>
 
-    <p>Account records are kept for as long as you have an account. When you delete your account, we delete your account record, your stored Google tokens, and your submission history.</p>
+    <p>Account records are kept for as long as you have an account. When you delete your account, we delete your account record, stored Google and Notion tokens, and submission history.</p>
 
     <h2>Who else sees your data</h2>
 
@@ -83,14 +99,15 @@
     <ul>
       <li><strong>OpenAI</strong> processes the text and images you submit in order to extract the fields. According to OpenAI's API data usage policy, content sent through the API is not used to train their models.</li>
       <li><strong>Google</strong> receives the rows you confirm, because they are written to your own Google Sheet in your own Google account.</li>
+      <li><strong>Notion</strong> receives the records you confirm, and any database configuration changes needed to save those records, because they are written to the pages and databases you selected in your Notion workspace.</li>
       <li><strong>Our hosting provider Hetzner (Germany)</strong> runs the servers and stores the database.</li>
     </ul>
 
     <p>We may disclose data if we are legally required to. If that happens and we are permitted to tell you, we will.</p>
 
-    <h2>Rows written to your sheet</h2>
+    <h2>Records written to your destination</h2>
 
-    <p>Once a row is written to your Google Sheet, it lives in your Google account and is governed by your agreement with Google, not by this policy. You can edit or delete it there at any time. Deleting your Ziga Data account does not remove rows we already wrote to your sheet, because that sheet is yours.</p>
+    <p>Once a record is written to your Google Sheet or Notion database, it lives in the account you connected and is governed by your agreement with that provider, not by this policy. You can edit or delete it there at any time. Deleting your Ziga Data account does not remove records already written to your destination, because that destination is yours.</p>
 
     <h2>Limited Use disclosure</h2>
 
@@ -101,8 +118,8 @@
 <p>Depending on where you live, including under the Nigeria Data Protection Act and, for users in the EEA or UK, the GDPR, you have the right to access the personal data we hold about you, correct it, delete it, object to or restrict how we use it, receive a copy in a portable format, and withdraw consent you have given. You also have the right to complain to your local data protection authority. We respond to verified requests within the period required by applicable law, and in any case within 30 days.</p>
 
 <ul>
-  <li><strong>Disconnect Google.</strong> Revoke Ziga Data's access at any time from your <a href="https://myaccount.google.com/permissions" rel="noopener">Google account permissions page</a>. We stop being able to write to your sheet immediately.</li>
-  <li><strong>See or export your data.</strong> Your confirmed leads are already in your own spreadsheet. For anything else we hold, write to us and we will send it to you.</li>
+  <li><strong>Disconnect Google or Notion.</strong> You can disconnect a destination in Ziga Data. You can also revoke Google access from your <a href="https://myaccount.google.com/permissions" rel="noopener">Google account permissions page</a> or remove Ziga Data from the relevant Notion page, database, or workspace connection settings. We stop being able to write to that destination after access is revoked or disconnected.</li>
+  <li><strong>See or export your data.</strong> Your confirmed leads are already in your own spreadsheet or Notion database. For anything else we hold, write to us and we will send it to you.</li>
   <li><strong>Correct your data.</strong> Write to us and we will fix anything inaccurate.</li>
   <li><strong>Delete your data.</strong> Write to <a href="mailto:hello@zigadata.com">hello@zigadata.com</a> and we will delete your account and everything attached to it.</li>
 </ul>
@@ -113,7 +130,7 @@
 
     <h2>Security</h2>
 
-    <p>Traffic to and from Ziga Data is encrypted in transit. Google OAuth tokens are encrypted at rest. Access to production systems is limited to the people who operate the service. No system is perfectly secure, and we will not pretend otherwise, but we will tell you promptly if something happens that affects your data.</p>
+    <p>Traffic to and from Ziga Data is encrypted in transit. Google and Notion OAuth tokens are encrypted at rest with AES-256-GCM. Access to production systems is limited to the people who operate the service. No system is perfectly secure, and we will not pretend otherwise, but we will tell you promptly if something happens that affects your data.</p>
 
     <h2>Children</h2>
 

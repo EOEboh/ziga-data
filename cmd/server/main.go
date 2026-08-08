@@ -16,10 +16,12 @@ import (
 
 	ziga "github.com/EOEboh/ziga-data"
 	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/httpapi"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/notionauth"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/sheets"
@@ -29,9 +31,9 @@ import (
 // dryRunWriter stands in for Google Sheets when SHEET_ID or credentials are
 // not configured: an in-memory sheet, so the full submit → confirm → preview
 // flow works locally. Rows are lost on restart. A cell containing the literal
-// "[fail]" makes Append error, to exercise the UI's failed-write path. It
+// "[fail]" makes Write error, to exercise the UI's failed-write path. It
 // mirrors the real writer's header semantics: with header set, the first
-// append into the empty sheet writes the header row first, and LastRows
+// append into the empty sheet writes the header row first, and Recent
 // skips it.
 type dryRunWriter struct {
 	log    *slog.Logger
@@ -40,10 +42,11 @@ type dryRunWriter struct {
 	rows   [][]string
 }
 
-func (d *dryRunWriter) Append(_ context.Context, row []string) error {
+func (d *dryRunWriter) Write(_ context.Context, lead destination.Lead) (destination.Result, error) {
+	row := lead.Values()
 	for _, cell := range row {
 		if strings.Contains(cell, "[fail]") {
-			return errors.New("dry-run: simulated sheet failure ([fail] marker in a cell)")
+			return destination.Result{}, errors.New("dry-run: simulated sheet failure ([fail] marker in a cell)")
 		}
 	}
 	d.mu.Lock()
@@ -53,10 +56,10 @@ func (d *dryRunWriter) Append(_ context.Context, row []string) error {
 	}
 	d.rows = append(d.rows, row)
 	d.log.Info("dry-run: row stored in memory, sheets not configured", "row", row)
-	return nil
+	return destination.Result{}, nil
 }
 
-func (d *dryRunWriter) LastRows(_ context.Context, n int) ([][]string, error) {
+func (d *dryRunWriter) Recent(_ context.Context, n int) ([][]string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rows := d.rows
@@ -155,7 +158,7 @@ func main() {
 	// (Server.writerFor uses per-user writers otherwise). So when OAuth is
 	// configured this is an unused placeholder, and the dry-run warning would be
 	// misleading — only emit it when the fallback can actually be reached.
-	var writer httpapi.RowWriter
+	var writer destination.Writer
 	switch {
 	case cfg.SheetID != "" && cfg.GoogleCredsPath != "":
 		writer, err = sheets.NewWriter(context.Background(), cfg.GoogleCredsPath, cfg.SheetID, cfg.SheetTab, header)
@@ -184,6 +187,9 @@ func main() {
 	// Google OAuth (identity + drive.file) and token encryption. When OAuth is
 	// unconfigured (dev) the box stays nil and the OAuth routes report 404.
 	oauthCfg := oauth.NewConfig(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.OAuthRedirectURL)
+	// Notion OAuth (public integration). config.Load has already refused to
+	// boot on partial configuration, so this is either fully set or fully off.
+	notionCfg := notionauth.NewConfig(cfg.NotionOAuthClientID, cfg.NotionOAuthClientSecret, cfg.NotionOAuthRedirectURL)
 	var box *secretbox.Box
 	if cfg.TokenEncryptionKey != "" {
 		box, err = secretbox.New(cfg.TokenEncryptionKey)
@@ -195,6 +201,11 @@ func main() {
 	if oauthCfg.Configured() {
 		log.Info("google oauth enabled", "scopes", oauthCfg.Scopes())
 	}
+	if notionCfg.Configured() {
+		log.Info("notion oauth enabled", "notion_version", cfg.NotionVersion, "redirect", notionCfg.RedirectURL())
+	} else {
+		log.Info("notion oauth not configured — Notion will not be offered as a destination")
+	}
 
 	static, err := fs.Sub(ziga.WebFS, "web/dist")
 	if err != nil {
@@ -202,7 +213,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, box)
+	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, notionCfg, box)
 	addr := ":" + cfg.Port
 	log.Info("listening", "addr", addr, "model", cfg.LLMModel, "schema", cfg.Schema.Name)
 	if err := http.ListenAndServe(addr, srv.Handler(static)); err != nil {

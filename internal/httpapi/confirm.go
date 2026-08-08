@@ -10,6 +10,7 @@ import (
 
 	"github.com/EOEboh/ziga-data/internal/extract"
 	"github.com/EOEboh/ziga-data/internal/llm"
+	"github.com/EOEboh/ziga-data/internal/notion"
 	"github.com/EOEboh/ziga-data/internal/store"
 )
 
@@ -105,9 +106,9 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, errNoSheet):
-			httpError(w, http.StatusConflict, "Connect a destination sheet before confirming")
+			httpError(w, http.StatusConflict, "Connect a destination before confirming")
 		case errors.Is(err, errReconnect):
-			httpError(w, http.StatusConflict, "Reconnect your Google account to write to your sheet")
+			httpError(w, http.StatusConflict, "Reconnect your destination to write this lead")
 		default:
 			s.log.Error("resolve writer", "id", id, "err", err)
 			httpError(w, http.StatusInternalServerError, "internal error")
@@ -115,25 +116,49 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := writer.Append(ctx, s.buildRow(&res, flags)); err != nil {
-		s.log.Error("sheet write failed", "id", id, "err", err)
+	result, err := writer.Write(ctx, s.buildLead(&res, flags))
+	if err != nil {
+		s.log.Error("destination write failed", "id", id, "err", err)
 		if uerr := s.store.Update(ctx, uid, id, store.StatusFailedWrite, mergedJSON, err.Error()); uerr != nil {
 			s.log.Error("store update failed", "id", id, "err", uerr)
+		}
+		// A write that failed because access was revoked or the resource was
+		// never granted is not a transient error a retry can fix — it needs a
+		// reconnect. Mark the destination broken and say so, rather than
+		// leaving the user to hit "retry" forever.
+		if notion.NeedsReconnect(err) {
+			s.markNotionBroken(ctx, uid)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"id":              id,
+				"status":          store.StatusFailedWrite,
+				"error":           "Ziga has lost access to your Notion database. Reconnect Notion to write this lead",
+				"needs_reconnect": true,
+			})
+			return
 		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"id":     id,
 			"status": store.StatusFailedWrite,
-			"error":  "Could not write to your sheet. Retry",
+			"error":  "Could not write to your destination. Retry",
 		})
 		return
 	}
 	if err := s.store.Update(ctx, uid, id, store.StatusWritten, mergedJSON, ""); err != nil {
-		// The row is on the sheet; only local bookkeeping failed. Surface
-		// success — a retry here would duplicate the sheet row.
-		s.log.Error("store update failed after sheet write", "id", id, "err", err)
+		// The lead is at the destination; only local bookkeeping failed.
+		// Surface success — a retry here would write it twice.
+		s.log.Error("store update failed after destination write", "id", id, "err", err)
 	}
-	s.log.Info("submission confirmed", "id", id)
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": store.StatusWritten})
+	s.log.Info("submission confirmed", "id", id, "dropped", result.Dropped)
+	resp := map[string]any{"id": id, "status": store.StatusWritten}
+	// A destination that could not accept every field still wrote the rest;
+	// name what it dropped so the loss is never silent.
+	if len(result.Dropped) > 0 {
+		resp["dropped_fields"] = result.Dropped
+	}
+	if result.URL != "" {
+		resp["url"] = result.URL
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {

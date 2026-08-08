@@ -146,3 +146,85 @@ func assertHistoryCount(t *testing.T, rec *httptest.ResponseRecorder, want int) 
 		t.Fatalf("history count = %d, want %d", len(body.Items), want)
 	}
 }
+
+// TestNotionDestinationIsolation is the multi-tenant guarantee for the Notion
+// destination: connecting a workspace is per-user, and one account can never
+// read, write to, or disconnect another's.
+//
+// The dangerous shape here is a user-supplied database id: user B knowing A's
+// database id must not be enough to reach it, because the request is
+// authorized by B's own token, which was never granted that database.
+func TestNotionDestinationIsolation(t *testing.T) {
+	a, fapi, userA := newConnectedNotionTest(t)
+	ctx := context.Background()
+
+	// A connects a Notion destination.
+	if rec := a.do("POST", "/api/notion/destination",
+		map[string]any{"database_id": "db-granted"}, true); rec.Code != 200 {
+		t.Fatalf("A set destination: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// B is a second account on the same server, with no Notion connection.
+	userB := mustVerifiedUser(t, a, "b-notion@x.com")
+	sessB := mustSession(t, a, userB)
+	csrf := a.cookies[csrfCookie]
+	asB := func(method, path string, body any) *httptest.ResponseRecorder {
+		t.Helper()
+		return a.reqAs(sessB, csrf, method, path, body)
+	}
+
+	// Every Notion route refuses B: no link of their own means no access,
+	// regardless of what ids they supply.
+	for _, route := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/notion/resources", nil},
+		{"GET", "/api/notion/databases/db-granted/mapping", nil},
+		{"POST", "/api/notion/destination", map[string]any{"database_id": "db-granted"}},
+		{"POST", "/api/notion/databases/create", map[string]any{"parent_page_id": "page-granted"}},
+	} {
+		rec := asB(route.method, route.path, route.body)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%s %s as an unconnected user: code=%d, want 409 connect-your-workspace",
+				route.method, route.path, rec.Code)
+		}
+	}
+
+	// B's attempts changed nothing: B still has no destination, and A's is
+	// untouched.
+	if _, err := a.s.store.GetDestination(ctx, userB); err == nil {
+		t.Fatal("B must not have acquired a destination")
+	}
+	destA, err := a.s.store.GetDestination(ctx, userA)
+	if err != nil || destA.Broken() {
+		t.Fatalf("A's destination was disturbed: %+v err=%v", destA, err)
+	}
+
+	// B disconnecting Notion only ever affects B.
+	if rec := asB("POST", "/api/notion/disconnect", map[string]string{}); rec.Code != 200 {
+		t.Fatalf("B disconnect: code=%d", rec.Code)
+	}
+	if !a.s.notionConnected(ctx, userA) {
+		t.Fatal("B's disconnect must not drop A's Notion link")
+	}
+
+	// A confirmed lead goes to A's database and nowhere else. B has no
+	// destination, so B's confirm is refused rather than falling through to
+	// anyone else's.
+	extraction, _ := json.Marshal(goodResult())
+	subB := &store.Submission{
+		UserID: userB, ContentHash: "iso-notion-b", Status: store.StatusPending, Extraction: extraction,
+	}
+	if _, err := a.s.store.Insert(ctx, subB); err != nil {
+		t.Fatal(err)
+	}
+	before := len(fapi.pages())
+	if rec := asB("POST", "/api/submissions/"+itoa(subB.ID)+"/confirm",
+		map[string]any{"fields": map[string]string{}}); rec.Code != http.StatusConflict {
+		t.Fatalf("B confirm without a destination: code=%d, want 409", rec.Code)
+	}
+	if got := len(fapi.pages()); got != before {
+		t.Fatalf("B's confirm wrote %d page(s) into A's workspace", got-before)
+	}
+}

@@ -50,6 +50,12 @@ export interface AppState {
   // Non-null while the write-error block (with Retry) is shown; the confirm
   // button hides so there is one primary action.
   writeError: string | null;
+  /**
+   * Schema fields the destination had no home for on the last confirm. A
+   * Notion database may lack a property for a field; the lead is still
+   * written, and this is what tells the user which values did not travel.
+   */
+  droppedFields: string[] | null;
   // Confirm/discard/retry disabled while a confirm or discard is in flight.
   busy: boolean;
 }
@@ -74,6 +80,7 @@ export const initialState: AppState = {
   queueCount: 0,
   submitError: null,
   writeError: null,
+  droppedFields: null,
   busy: false,
 };
 
@@ -100,6 +107,7 @@ export type Action =
   | { type: "DISCARD_STARTED" }
   | { type: "SETTLE_BEGIN" }
   | { type: "SETTLE_FLASH"; preview: PreviewResponse }
+  | { type: "FIELDS_DROPPED"; fields: string[] | null }
   | { type: "ENTER_EMPTY" };
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -112,6 +120,9 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "PREVIEW_LOADED":
       return { ...state, preview: action.preview };
+
+    case "FIELDS_DROPPED":
+      return { ...state, droppedFields: action.fields };
 
     case "SET_COMPOSE_TEXT":
       return { ...state, composeText: action.text };

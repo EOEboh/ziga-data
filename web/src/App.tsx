@@ -8,6 +8,7 @@ import { ApiError, api } from "./api";
 import { AccountMenu } from "./components/AccountMenu";
 import { ComposeBox } from "./components/ComposeBox";
 import { HistoryView } from "./components/HistoryView";
+import { DroppedFieldsNotice } from "./components/DroppedFieldsNotice";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { ReviewPane } from "./components/ReviewPane";
 import { TopBar } from "./components/TopBar";
@@ -168,13 +169,22 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
     dispatch({ type: "CONFIRM_STARTED" });
 
     try {
-      await api.confirm(sub.id, stateRef.current.fields);
+      const res = await api.confirm(sub.id, stateRef.current.fields);
+      // A destination that could not accept every field still wrote the rest;
+      // name what it dropped rather than losing it quietly.
+      dispatch({ type: "FIELDS_DROPPED", fields: res.dropped_fields ?? null });
     } catch (err) {
       if (err instanceof ApiError && err.status === 422 && err.fieldStates) {
         dispatch({ type: "CONFIRM_INVALID", fieldStates: err.fieldStates });
         return;
       }
       if (err instanceof ApiError && err.status === 409) {
+        // A lost-access 409 is not "already written": the lead is still
+        // pending and the user has to reconnect before a retry can work.
+        if (/reconnect/i.test(err.message)) {
+          dispatch({ type: "WRITE_FAILED", message: err.message });
+          return;
+        }
         // Already written (double click, second tab): treat as settled.
         await settle();
         return;
@@ -183,7 +193,7 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
         type: "WRITE_FAILED",
         message:
           err instanceof ApiError && err.status !== 0
-            ? "Could not write to your sheet."
+            ? "Could not write to your destination."
             : "Could not reach the server.",
       });
       return;
@@ -317,6 +327,12 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
                 onDiscard={discard}
                 onRetry={confirm}
                 onEditRerun={editRerun}
+              />
+            )}
+            {state.droppedFields && state.droppedFields.length > 0 && (
+              <DroppedFieldsNotice
+                fields={state.droppedFields}
+                onDismiss={() => dispatch({ type: "FIELDS_DROPPED", fields: null })}
               />
             )}
             {state.booted && state.preview !== null && (

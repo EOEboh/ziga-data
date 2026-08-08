@@ -5,30 +5,39 @@
   </picture>
 </h1>
 
-Paste unstructured lead info — text, a forwarded email, or a screenshot — and Ziga Data extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and appends a row to **your own Google Sheet** when you confirm. Nothing is written until you confirm.
+Paste unstructured lead info — text, a forwarded email, or a screenshot — and Ziga Data extracts it into structured fields (name, contact, source, need, date, notes), shows them in an editable review pane, and writes it to **your own Google Sheet or Notion database** when you confirm. Nothing is written until you confirm.
 
 - **Shape**: one Go binary. The React frontend is built ahead of time and embedded via `go:embed`, so deploying is copying a single file — no Node, no runtime assets, no separate web server.
-- **Tenancy**: multi-tenant. Every user has an account, connects their own Google account, and writes to their own spreadsheet. One user is one tenant; there are no shared workspaces yet.
+- **Tenancy**: multi-tenant. Every user has an account, connects their own Google or Notion account, and writes to their own destination. One user is one tenant; there are no shared workspaces yet.
 - **Auth**: email + password with emailed verification, password reset, and Google sign-in. Sessions are cookie-based with CSRF on every unsafe method.
-- **Destination**: the Google Sheets API called with **each user's own OAuth token** under the `drive.file` scope. Ziga Data can only see the spreadsheet a user created through the app or picked with the Google Picker — nothing else in their Drive.
+- **Destination**: a pluggable interface (`internal/destination.Writer`) with two implementations, one active per user.
+  - **Google Sheets** — called with each user's own OAuth token under the `drive.file` scope. Ziga Data can only see the spreadsheet a user created through the app or picked with the Google Picker — nothing else in their Drive.
+  - **Notion** — called with each user's own workspace token from a public connection. Notion's consent screen has the user pick exactly which pages and databases to share; Ziga Data never requests whole-workspace access.
 - **LLM**: OpenAI `gpt-5.4-nano` via the Chat Completions API (text + vision, [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) with `strict: true` guarantee schema-valid JSON). The client sits behind an interface (`internal/llm.Extractor`), so the provider/model can be swapped without touching the pipeline.
 - **Frontend**: React 18 + TypeScript built with Vite (`web/`), styled with Tailwind CSS on shared design tokens. `BrowserRouter` for the auth and onboarding screens; a `useReducer` state machine for the review flow.
-- **Storage**: a single SQLite file for accounts, encrypted OAuth tokens, per-user sheet links, dedup keys, pending reviews, failed writes, and history. Raw originals (full pasted text, uploaded images) are purged `RETENTION_DAYS` (default 14) after a submission is confirmed or discarded — extraction results and the short excerpt stay. The cleanup runs at boot and daily.
+- **Storage**: a single SQLite file for accounts, encrypted OAuth tokens, per-user destinations, dedup keys, pending reviews, failed writes, and history. Raw originals (full pasted text, uploaded images) are purged `RETENTION_DAYS` (default 14) after a submission is confirmed or discarded — extraction results and the short excerpt stay. The cleanup runs at boot and daily.
 
 ## Architecture
 
 Every request that touches data is scoped to the signed-in user: the handler reads the user id from the session and passes it to the store, so queue, history, preview, confirm, and the image endpoint can only ever see one account's rows. `internal/httpapi/isolation_test.go` holds the suite that enforces this.
 
-The write path is resolved per request by `Server.writerFor` (`internal/httpapi/sheets.go`), and which branch it takes depends entirely on whether Google OAuth is configured:
+The write path is resolved per request by `Server.writerFor` (`internal/httpapi/sheets.go`), which is the one place that knows which implementation serves which destination type. Everything downstream — confirm, preview — works through `destination.Writer`:
 
-| Google OAuth configured | Writer | Used for |
+| Provider configured | Writer | Used for |
 |---|---|---|
-| **Yes** (client id + secret + `TOKEN_ENCRYPTION_KEY`) | A per-user Sheets client built from that user's stored refresh token, targeting the spreadsheet they connected | **Production.** Each user's rows go to their own sheet |
-| No | One process-wide writer: the service-account writer when `SHEET_ID` + `GOOGLE_APPLICATION_CREDENTIALS` are both set, otherwise an in-memory dry-run sheet | **Local dev and tests only** |
+| **Google** (client id + secret + `TOKEN_ENCRYPTION_KEY`) | A per-user Sheets client built from that user's stored refresh token, targeting the spreadsheet they connected | **Production** |
+| **Notion** (client id + secret + redirect + `TOKEN_ENCRYPTION_KEY`) | A per-user Notion client targeting the data source they connected, with the field→property mapping they reviewed | **Production** |
+| Neither | One process-wide writer: the service-account writer when `SHEET_ID` + `GOOGLE_APPLICATION_CREDENTIALS` are both set, otherwise an in-memory dry-run sheet | **Local dev and tests only** |
 
-When OAuth is configured the process-wide writer is never consulted. There is no supported production configuration in which every tenant shares one spreadsheet.
+When either provider is configured the process-wide writer is never consulted. There is no supported production configuration in which every tenant shares one destination.
 
-Tokens are encrypted at rest with AES-256-GCM (`internal/secretbox`) before they reach SQLite, and refreshed access tokens are re-encrypted and written back as they rotate. Two connection states surface to the user rather than failing a write: a user who has not connected a sheet yet gets `409 Connect a destination sheet before confirming`, and a revoked or expired grant gets `409 Reconnect your Google account`, which also flags the connection so the destination picker prompts for a reconnect.
+**One destination at a time.** A user writes to a Google Sheet *or* a Notion database, stored as a single row in `destinations` (type + a per-type JSON config + connect time + broken flag). Switching replaces it. Fan-out to both is not in this pass — see [TODO](#todo).
+
+**The unit of exchange is a lead, not a row.** `destination.Lead` is ordered (field, value) pairs. A sheet writes the values in column order; Notion needs to know which field each value came from, because its properties are typed. A write returns which fields the destination could not accept, so a partial write is reported rather than silently lossy.
+
+Tokens are encrypted at rest with AES-256-GCM (`internal/secretbox`) before they reach SQLite, and refreshed Google access tokens are re-encrypted and written back as they rotate. Notion tokens are long-lived and carry a refresh token only when the connection uses token rotation, so both refresh and expiry are optional there.
+
+Two connection states surface to the user rather than failing a write: a user with no destination yet gets `409 Connect a destination before confirming`, and a revoked or expired grant gets a `409` reconnect prompt that also flags the destination so the picker and account menu ask for a reconnect. A **broken destination is still a configured one** — that user stays in the app with a reconnect prompt and can keep submitting and reviewing; only the write is blocked.
 
 ## How a submission flows
 
@@ -89,6 +98,17 @@ make ui-build              # rebuild web/dist — commit the result
 
 Open http://localhost:5173/?mock=1 (or :8080/?mock=1 against the embedded build) to drive the UI against built-in fixtures (all confidence states, a failing confirm) with no backend calls.
 
+The Notion path is walkable there too:
+
+| URL | State |
+|---|---|
+| `/?mock=1` | Google Sheet destination (the default) |
+| `/onboarding-notion?mock=1` | The Notion connect screen; "Connect Notion" simulates returning from consent |
+| `/?mock=1&notion=connected` | Already on a Notion destination |
+| `/?mock=1&notion=broken` | Notion access revoked — the reconnect prompts in the topbar, account menu, and confirm |
+
+The fixture workspace deliberately includes a database with no `notes` property and an unwritable `status` property, so the dropped-fields notice and the excluded-property behavior are both reachable.
+
 ### Environment variables
 
 Grouped as in [`.env.example`](.env.example). Everything in the first four groups is live in production; the last group exists only for local dev and tests.
@@ -121,8 +141,19 @@ Leave the client id and secret empty to run without Google sign-in and without p
 | `GOOGLE_OAUTH_CLIENT_ID` | for the real write path | — | From a Google Cloud OAuth 2.0 Client (Web application) |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | for the real write path | — | Same client |
 | `OAUTH_REDIRECT_URL` | | `$APP_BASE_URL/api/auth/google/callback` | Must match the redirect URI registered in the Cloud console exactly |
-| `TOKEN_ENCRYPTION_KEY` | ✅ whenever OAuth is set | — | Base64 32-byte key encrypting OAuth tokens at rest (AES-256-GCM). **The server refuses to boot** if OAuth is configured and this is empty, so tokens can never be stored in plaintext. Generate with `head -c 32 /dev/urandom \| base64` |
+| `TOKEN_ENCRYPTION_KEY` | ✅ whenever any OAuth provider is set | — | Base64 32-byte key encrypting Google **and** Notion tokens at rest (AES-256-GCM). **The server refuses to boot** if a provider is configured and this is empty, so tokens can never be stored in plaintext. Generate with `head -c 32 /dev/urandom \| base64` |
 | `GOOGLE_PICKER_API_KEY` | for the attach flow | — | Browser API key served to the frontend for the Google Picker (attach an existing sheet) |
+
+**Notion OAuth** (per-user Notion database destination)
+
+All three of the `NOTION_OAUTH_*` variables, or none. Partial configuration is a boot error naming the missing ones; with none set, Notion is not offered.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `NOTION_OAUTH_CLIENT_ID` | to offer Notion | — | From a Notion **public connection** |
+| `NOTION_OAUTH_CLIENT_SECRET` | to offer Notion | — | Same connection |
+| `NOTION_OAUTH_REDIRECT_URL` | to offer Notion | — | Must match a redirect URI registered on the connection exactly |
+| `NOTION_VERSION` | | `2026-03-11` | The `Notion-Version` header sent on every request. See [Notion API version](#notion-api-version) before changing it |
 
 **Sheet layout**
 
@@ -181,6 +212,79 @@ Sign in with Google, then either let Ziga Data **create** a spreadsheet (`POST /
 
 From then on every confirmed row is appended to that user's sheet using their own token. If they later revoke access from their Google account, the next write returns a reconnect prompt rather than failing silently.
 
+## Setting up Notion
+
+Optional. With the `NOTION_OAUTH_*` variables unset, Notion is simply not offered and every `/api/notion/*` route returns 404.
+
+1. In the [Notion developer portal](https://app.notion.com/developers/connections), create a **public connection**. Notion renamed these from "integrations" — the OAuth credentials live on the **Configuration** tab. Only a *public* connection speaks OAuth; an *internal* connection uses a static token and cannot serve other people's workspaces.
+2. Set the **installation scope to "Any workspace"**. This is fixed at creation and cannot be changed afterwards, and "selected workspaces only" would stop other people's workspaces from connecting at all.
+3. Register the redirect URI on the connection — it must match `NOTION_OAUTH_REDIRECT_URL` exactly, including scheme and port.
+4. Grant exactly these capabilities, which are what the code actually uses:
+
+   | Capability | Needed for |
+   |---|---|
+   | **Read content** | `POST /search` (the granted databases and pages), `GET /databases/{id}` → data source, `GET /data_sources/{id}` → the property schema, `POST /data_sources/{id}/query` (preview strip) |
+   | **Insert content** | `POST /pages` (writing a lead), `POST /databases` (auto-creating "Ziga Leads") |
+   | **Update content** | `PATCH /data_sources/{id}` — only ever used to add a missing `select` option before retrying a write. Without it, a lead whose `source` value the property has not seen fails instead of being repaired |
+   | **No user information** | The app never calls `/users`. Workspace identity comes from the token response, so there is no reason to ask for user data |
+
+   Comment capabilities are not needed.
+5. Set `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_OAUTH_REDIRECT_URL`, and `TOKEN_ENCRYPTION_KEY`.
+
+> **A public connection must be submitted for review before its OAuth flow goes live.** Notion populates the connection's Authorization URL only after submission, so plan for that lead time before a public launch — and see [Verifying against a real workspace](#verifying-against-a-real-workspace) for what can be tested before then.
+
+**All three or none.** Setting some but not others is a **boot error** that names the missing ones — the same guard as `ZIGA_DEV_MODE` for Google, so a typo can never produce a running process that offers a "Connect Notion" button which then dies at the callback.
+
+### What a Notion user then does
+
+The user creates nothing in Notion — no connection, no API key. They only grant access to pages they already have.
+
+1. Picks Notion as their destination in Ziga and clicks **Connect Notion**.
+2. On Notion's screen: approves the capabilities, then uses the **page picker** to select which pages and databases to share. Notion only lists resources the user has *full access* to, so a page shared with them at comment- or read-level will not appear.
+3. **What they pick determines their options in the next step:**
+   - shared at least one **page** → Ziga can create a "Ziga Leads" database inside it
+   - shared at least one **database** → they can use that database instead
+   - shared only databases → the create option is unavailable, and Ziga says so rather than failing
+   - shared nothing usable → Ziga tells them to reconnect and grant something
+4. Back in Ziga: either lets it **create a "Ziga Leads" database** (the safe default — the app owns the schema, so every field has a home of the right type and nothing can be dropped), or **picks an existing database** and reviews the **field→property mapping** before saving.
+
+Access is revocable from the user's side at any time, in Notion's own settings. Ziga detects the revocation on the next write and prompts a reconnect rather than failing silently.
+
+### Verifying against a real workspace
+
+A public connection must be submitted for review before Notion serves its OAuth consent screen, which gates the full end-to-end check. What can be verified before that:
+
+| Check | Needs review? |
+|---|---|
+| Boot guards — partial config exits naming the missing vars; no config boots with Notion unoffered | no |
+| The whole UI flow — connect, create/pick, mapping, dropped fields, reconnect — via `?mock=1` | no |
+| Whether `api.notion.com/v1/oauth/authorize` accepts the client id — hit the consent URL and see whether it forwards to `app.notion.com/install-integration` (accepted) or rejects the client | no — one request |
+| Token exchange, schema fetch, page create, select-option creation, revoked-access handling | **yes** |
+
+The last row is the one that validates this build's assumptions about Notion's response shapes, since every test runs against fakes built from the documentation.
+
+Checked on 2026-08-06 against a freshly created, **unsubmitted** connection: the authorize leg is already live. `GET /v1/oauth/authorize` returned `302` to `app.notion.com/install-integration` with `state` and `owner=user` preserved, and an unauthenticated visit lands on Notion's login page rather than an error — so a valid client id resolves before review. That does not prove the post-login consent screen renders for an unsubmitted connection, which is the next thing a real login settles.
+
+### Why there is a mapping step
+
+A Google Sheet is rows and columns: every schema field has a cell, always. A Notion database is pages with *typed* properties, and a user's existing database was not built for Ziga. So on connect Ziga fetches the database's schema and proposes a mapping — exact name match, then case-insensitive, then type affinity — and shows it for review rather than applying it silently.
+
+- **Property names are case-sensitive.** `Name` and `name` are different properties; the exact casing round-trips untouched from the schema into the stored mapping.
+- **Values are coerced to the target property's type.** The title property takes the lead name; an `email` property takes the contact only when it really is an email address (a phone number or `@handle` would be rejected by Notion); a `date` property takes the ISO date.
+- **A field with no home is dropped, not fatal.** The page is created with everything that maps, and the response names what was dropped so the review pane can say so. Never a silent loss.
+- **`select` options are created on demand.** If `source` carries a value the property has not seen, the write is retried once after adding the option to the schema.
+- **`status` properties are never mapped.** The API cannot add options to them, so an unseen value would be unwritable.
+
+The mapping is re-validated against the live schema when it is saved, so a database edited between the mapping screen and the save cannot produce a destination that fails on the first real lead.
+
+### Notion API version
+
+Notion pins behavior to a dated `Notion-Version` header sent on **every** request. It lives once in config (`NOTION_VERSION`, default `2026-03-11`) rather than at call sites.
+
+This build targets the **data-source model** introduced in `2025-09-03`: a database is a parent of one or more data sources, the property schema lives on the data source, and pages are created with a `data_source_id` parent. Do not set this back to `2022-06-28` — Notion documents that version as failing outright on databases with more than one data source, which would break lead writes for a user who merely restructured their database.
+
+Notion's rate limit is roughly **3 requests per second per connection install**, enforced client-side by a limiter keyed per workspace, with retry-on-429 honoring `Retry-After`.
+
 ## API
 
 Every unsafe method carries CSRF. Routes marked 🔒 require a session and operate only on the signed-in user's data.
@@ -195,7 +299,7 @@ Every unsafe method carries CSRF. Routes marked 🔒 require a session and opera
 | `POST /api/auth/logout` | Clears the session |
 | `POST /api/auth/password/forgot` | Emails a reset link. Rate-limited; response does not reveal whether the address exists |
 | `POST /api/auth/password/reset` | `{token, password}` |
-| `GET /api/me` | Current user, sheet connection state, and whether a reconnect is needed |
+| `GET /api/me` | Current user, destination state (`destination_configured` gates onboarding, `destination_connected` means writable right now), and which providers this server offers |
 
 **Google**
 
@@ -207,22 +311,34 @@ Every unsafe method carries CSRF. Routes marked 🔒 require a session and opera
 | `POST /api/sheets/create` 🔒 | Creates a "Ziga Leads" spreadsheet under the user's account and records it as their destination |
 | `POST /api/sheets/attach` 🔒 | `{spreadsheet_id}` from the Picker. Records an existing spreadsheet, appending to its first tab |
 
+**Notion** (all 🔒; all `404` when Notion is not configured)
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/notion/start` | Begins the OAuth flow with an anti-forgery state cookie. Connect-only, never a sign-in, so it requires an existing session |
+| `GET /api/notion/callback` | Exchanges the code and stores the encrypted workspace token, then redirects into the database-choice step |
+| `POST /api/notion/disconnect` | Drops the Notion link and its stored token; marks a Notion destination broken |
+| `GET /api/notion/resources` | The databases and pages the user granted during consent, plus `can_create` (false when no page was shared, so there is nowhere to create a database) |
+| `GET /api/notion/databases/{id}/mapping` | The proposed field→property mapping, every property offered as an alternative, and the fields this database has no home for |
+| `POST /api/notion/databases/create` | `{parent_page_id}`. Creates a "Ziga Leads" database with a known-correct schema and records it as the destination |
+| `POST /api/notion/destination` | `{database_id, mapping}`. Re-validates the mapping against the live schema, then records the database as the destination. `422` if the mapping no longer fits |
+
 **Submissions** (all 🔒)
 
 | Endpoint | Description |
 |---|---|
 | `POST /api/submit` | multipart form: `text` and/or `image`. Extract-only — stores a `pending` submission and returns `{id, status, result, field_states, flags, input, created_at}`. Writes nothing to the sheet |
-| `POST /api/submissions/{id}/confirm` | body `{"fields": {name: value, ...}}` with the reviewed values. The only path that appends a sheet row. Accepts `pending` and `failed_write` (retry = same call); `422` if a required field is still empty; `409` once written, if discarded, if no sheet is connected yet, or if the Google grant needs reconnecting |
+| `POST /api/submissions/{id}/confirm` | body `{"fields": {name: value, ...}}` with the reviewed values. The only path that writes a lead. Returns `dropped_fields` when the destination had no home for some of them, and `url` when it links to the written row/page. Accepts `pending` and `failed_write` (retry = same call); `422` if a required field is still empty; `409` once written, if discarded, if no destination is connected yet, or if the grant needs reconnecting |
 | `POST /api/submissions/{id}/discard` | soft-delete a pending/failed submission: row retained as `discarded`, same-day dedup hash freed. Idempotent; discarded items leave the queue and history |
 | `GET /api/submissions/{id}/image` | the original uploaded image |
 | `GET /api/queue` | pending + failed submissions, newest 100, with `count` for the badge |
-| `GET /api/preview` | last 3 data rows of the user's sheet. Degrades to an empty strip rather than erroring when no sheet is connected or the grant is broken |
-| `GET /api/destination` | the user's connected destination, for the picker |
+| `GET /api/preview` | last 3 leads at the user's destination, in schema column order. Degrades to an empty strip rather than erroring when nothing is connected or the grant is broken |
+| `GET /api/destination` | the user's active destination plus the alternatives, for the picker. An alternative is marked `unavailable` when this server has no connection configured for it |
 | `GET /api/history` | last 50 written submissions |
 
 `GET /healthz` is the unauthenticated liveness probe.
 
-`status` is `pending` / `written` / `failed_write` / `discarded`. `/api/submit` (LLM cost) and `/api/submissions/{id}/confirm` (Google Sheets quota) share one per-IP rate-limit budget (`RATE_LIMIT_PER_MIN`).
+`status` is `pending` / `written` / `failed_write` / `discarded`. `/api/submit` (LLM cost) and `/api/submissions/{id}/confirm` (destination API quota) share one per-IP rate-limit budget (`RATE_LIMIT_PER_MIN`).
 
 Every request is logged as structured JSON (content hash — never raw content —, confidence, missing fields, status, duration).
 
@@ -246,7 +362,17 @@ Checking the real per-user write path means signing in with Google against a con
 go test ./...
 ```
 
-Covers the per-field confidence matrix, date defaulting, JSON-schema shape, dedup/store behavior including the legacy-database migration, and the confirm/retry/discard handler paths. On the multi-tenant side: `internal/httpapi/auth_test.go` (signup, verification, login, reset), `internal/httpapi/oauth_test.go` (the callback and the account-linking rules), `internal/httpapi/sheets_test.go` (create and attach), `internal/oauth/oauth_test.go` (which asserts the broad `spreadsheets` scope is never requested), and `internal/httpapi/isolation_test.go`, which walks every user-scoped endpoint and fails if one account can reach another's data.
+Covers the per-field confidence matrix, date defaulting, JSON-schema shape, dedup/store behavior including the legacy-database migrations, and the confirm/retry/discard handler paths. No test touches the network: Google and Notion are both `httptest` fakes.
+
+On the multi-tenant side: `internal/httpapi/auth_test.go` (signup, verification, login, reset), `internal/httpapi/oauth_test.go` (the callback and the account-linking rules), `internal/httpapi/sheets_test.go` (create and attach), `internal/oauth/oauth_test.go` (which asserts the broad `spreadsheets` scope is never requested), and `internal/httpapi/isolation_test.go`, which walks every user-scoped endpoint and fails if one account can reach another's data.
+
+The migration guarantees are load-bearing and tested as such:
+
+- `TestLegacySheetUserWritesAfterMigration` seeds a database as the pre-generalization build left it (a `user_sheets` row, no `destinations` table), boots the server on it, signs in, and confirms a lead — asserting it lands on the *original* spreadsheet with no reconnect. Verified to fail when the backfill is removed.
+- `TestMigrateOAuthAccountsRenamesGoogleSub` opens a database written when the column was `google_sub` and asserts existing links still resolve. Losing this would sign every Google user out.
+- `TestBackfillIsIdempotentAndDoesNotClobber` — the backfill runs on every boot, so it must never resurrect a stale legacy row over a destination the user has since changed.
+
+On the Notion side: `internal/notionauth` (the consent URL shape, that no scope is ever requested, and that the client secret travels in the HTTP Basic header rather than the body), `internal/notion` (mapping across property types, case-sensitivity, partial writes with reported dropped fields, select-option creation, `Notion-Version` on every request, 429 backoff, and 404-as-permission), and `internal/httpapi/notion_oauth_test.go` / `notion_setup_test.go` (the connect flow, encrypted-token round trip, the mapping and destination endpoints, the revoked-access reconnect path, and Notion destination isolation).
 
 For a live end-to-end check, run the server and try: a normal lead, one containing "ignore previous instructions…", a two-lead message, and a non-English lead.
 
@@ -336,6 +462,15 @@ Deliberately out of scope for now:
 - Multi-lead extraction (splitting one paste into several rows; today only the primary lead is extracted and a banner is shown)
 - History depth (pagination/search beyond the last 50 written submissions)
 
+Deliberately out of scope for the Notion destination pass:
+
+- **Email ingestion** — a separate later pass; nothing in this one touches it.
+- **Multi-destination fan-out** — writing one lead to both Sheets *and* Notion. A user has exactly one active destination; switching replaces it. The destination model is a single row per user, so fan-out means a schema change, not just a loop.
+- **Airtable / HubSpot** — the writer interface now has two implementations and adding a third is additive, but none is planned yet.
+- **Attachments** — the submitted image is never uploaded to the destination, on either provider.
+- **Notion `status` properties** — they are excluded from mapping and rejected if chosen manually, because the API cannot add options to them, so a lead with an unseen value would be unwritable.
+- **Multiple data sources per Notion database** — a database with more than one data source writes to the first. Choosing among them is not offered.
+
 Deferred from the multi-tenant auth pass:
 
 - **Billing / subscriptions** — no plans or payment yet; every account is free.
@@ -347,4 +482,5 @@ Deferred from the multi-tenant auth pass:
 
 ## Changelog
 
+- 2026-08 — **Notion** joins Google Sheets as a lead destination; the per-user destination model is generalized behind a writer interface, with existing Sheets users migrated in place
 - 2026-07 — renamed to **Ziga Data** (formerly sheetdrop)

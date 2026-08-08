@@ -24,14 +24,18 @@ type User struct {
 // Verified reports whether the account's email has been verified.
 func (u *User) Verified() bool { return !u.EmailVerifiedAt.IsZero() }
 
-// OAuthAccount links a user to a Google identity and holds their encrypted
-// OAuth tokens. AccessToken/RefreshToken are ciphertext (AES-GCM, see
-// internal/secretbox); this package never sees the plaintext. BrokenAt is set
-// when a refresh fails (revoked access) so the app can prompt a reconnect.
+// OAuthAccount links a user to an identity at an OAuth provider and holds
+// their encrypted tokens. AccessToken/RefreshToken are ciphertext (AES-GCM,
+// see internal/secretbox); this package never sees the plaintext. BrokenAt is
+// set when a refresh fails (revoked access) so the app can prompt a reconnect.
+//
+// ProviderSub is the provider's stable subject id for the link: Google's `sub`
+// claim, or Notion's bot id. It is unique across providers, which is what lets
+// a sign-in map an identity back to a user.
 type OAuthAccount struct {
 	UserID          int64
 	Provider        string
-	GoogleSub       string
+	ProviderSub     string
 	AccessTokenEnc  []byte
 	RefreshTokenEnc []byte
 	TokenExpiry     time.Time
@@ -51,20 +55,6 @@ type Session struct {
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
-
-// UserSheet is a user's single lead destination. CreatedByApp distinguishes an
-// auto-created sheet from one attached via the Google Picker. BrokenAt marks a
-// destination whose OAuth access was lost.
-type UserSheet struct {
-	UserID        int64
-	SpreadsheetID string
-	SheetTab      string
-	CreatedByApp  bool
-	ConnectedAt   time.Time
-	BrokenAt      time.Time
-}
-
-func (s *UserSheet) Broken() bool { return !s.BrokenAt.IsZero() }
 
 // AuthTokenKind is the purpose of a single-use token.
 type AuthTokenKind string
@@ -88,7 +78,7 @@ func createAuthTables(db *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS oauth_accounts (
 			user_id           INTEGER NOT NULL,
 			provider          TEXT NOT NULL,
-			google_sub        TEXT NOT NULL UNIQUE,
+			provider_sub      TEXT NOT NULL UNIQUE,
 			access_token_enc  BLOB,
 			refresh_token_enc BLOB,
 			token_expiry      TEXT,
@@ -122,7 +112,10 @@ func createAuthTables(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash ON auth_tokens(token_hash);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return createDestinationTable(db)
 }
 
 // --- users ---
@@ -255,17 +248,17 @@ func (s *Store) UpsertOAuthAccount(ctx context.Context, a *OAuthAccount) error {
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO oauth_accounts
-			(user_id, provider, google_sub, access_token_enc, refresh_token_enc,
+			(user_id, provider, provider_sub, access_token_enc, refresh_token_enc,
 			 token_expiry, scopes, connected_at, broken_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
 		ON CONFLICT(user_id, provider) DO UPDATE SET
-			google_sub        = excluded.google_sub,
+			provider_sub      = excluded.provider_sub,
 			access_token_enc  = excluded.access_token_enc,
 			refresh_token_enc = excluded.refresh_token_enc,
 			token_expiry      = excluded.token_expiry,
 			scopes            = excluded.scopes,
 			broken_at         = NULL`,
-		a.UserID, a.Provider, a.GoogleSub, a.AccessTokenEnc, a.RefreshTokenEnc,
+		a.UserID, a.Provider, a.ProviderSub, a.AccessTokenEnc, a.RefreshTokenEnc,
 		rfcOrEmpty(a.TokenExpiry), a.Scopes, a.ConnectedAt.UTC().Format(time.RFC3339))
 	return err
 }
@@ -273,26 +266,28 @@ func (s *Store) UpsertOAuthAccount(ctx context.Context, a *OAuthAccount) error {
 // GetOAuthAccount returns the user's link for a provider, or ErrNotFound.
 func (s *Store) GetOAuthAccount(ctx context.Context, userID int64, provider string) (*OAuthAccount, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT user_id, provider, google_sub, access_token_enc, refresh_token_enc,
+		SELECT user_id, provider, provider_sub, access_token_enc, refresh_token_enc,
 		       token_expiry, scopes, connected_at, broken_at
 		FROM oauth_accounts WHERE user_id = ? AND provider = ?`, userID, provider)
 	return scanOAuth(row)
 }
 
-// GetOAuthAccountBySub finds a Google link by its stable subject id, or
-// ErrNotFound — used at login to map a Google identity back to a user.
-func (s *Store) GetOAuthAccountBySub(ctx context.Context, googleSub string) (*OAuthAccount, error) {
+// GetOAuthAccountBySub finds a link by provider and stable subject id, or
+// ErrNotFound — used at login to map an identity back to a user. The provider
+// is part of the lookup so a non-identity link (a connected Notion workspace,
+// say) can never satisfy a sign-in.
+func (s *Store) GetOAuthAccountBySub(ctx context.Context, provider, sub string) (*OAuthAccount, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT user_id, provider, google_sub, access_token_enc, refresh_token_enc,
+		SELECT user_id, provider, provider_sub, access_token_enc, refresh_token_enc,
 		       token_expiry, scopes, connected_at, broken_at
-		FROM oauth_accounts WHERE google_sub = ?`, googleSub)
+		FROM oauth_accounts WHERE provider = ? AND provider_sub = ?`, provider, sub)
 	return scanOAuth(row)
 }
 
 func scanOAuth(row scanner) (*OAuthAccount, error) {
 	var a OAuthAccount
 	var expiry, connectedAt, brokenAt, scopes sql.NullString
-	if err := row.Scan(&a.UserID, &a.Provider, &a.GoogleSub, &a.AccessTokenEnc, &a.RefreshTokenEnc,
+	if err := row.Scan(&a.UserID, &a.Provider, &a.ProviderSub, &a.AccessTokenEnc, &a.RefreshTokenEnc,
 		&expiry, &scopes, &connectedAt, &brokenAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -339,61 +334,10 @@ func (s *Store) DeleteOAuthAccount(ctx context.Context, userID int64, provider s
 	return err
 }
 
-// --- user sheets ---
-
-// SetUserSheet sets (or replaces) the user's single lead destination, clearing
-// any broken state.
-func (s *Store) SetUserSheet(ctx context.Context, sh *UserSheet) error {
-	if sh.ConnectedAt.IsZero() {
-		sh.ConnectedAt = time.Now().UTC()
-	}
-	createdByApp := 0
-	if sh.CreatedByApp {
-		createdByApp = 1
-	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO user_sheets (user_id, spreadsheet_id, sheet_tab, created_by_app, connected_at, broken_at)
-		VALUES (?, ?, ?, ?, ?, NULL)
-		ON CONFLICT(user_id) DO UPDATE SET
-			spreadsheet_id = excluded.spreadsheet_id,
-			sheet_tab      = excluded.sheet_tab,
-			created_by_app = excluded.created_by_app,
-			connected_at   = excluded.connected_at,
-			broken_at      = NULL`,
-		sh.UserID, sh.SpreadsheetID, sh.SheetTab, createdByApp, sh.ConnectedAt.UTC().Format(time.RFC3339))
-	return err
-}
-
-// GetUserSheet returns the user's destination, or ErrNotFound.
-func (s *Store) GetUserSheet(ctx context.Context, userID int64) (*UserSheet, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT user_id, spreadsheet_id, sheet_tab, created_by_app, connected_at, broken_at
-		FROM user_sheets WHERE user_id = ?`, userID)
-	var sh UserSheet
-	var createdByApp int
-	var connectedAt string
-	var brokenAt sql.NullString
-	if err := row.Scan(&sh.UserID, &sh.SpreadsheetID, &sh.SheetTab, &createdByApp, &connectedAt, &brokenAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	sh.CreatedByApp = createdByApp != 0
-	sh.ConnectedAt, _ = time.Parse(time.RFC3339, connectedAt)
-	if brokenAt.Valid && brokenAt.String != "" {
-		sh.BrokenAt, _ = time.Parse(time.RFC3339, brokenAt.String)
-	}
-	return &sh, nil
-}
-
-// MarkSheetBroken flags the destination as unwritable (lost OAuth access).
-func (s *Store) MarkSheetBroken(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE user_sheets SET broken_at = COALESCE(broken_at, ?) WHERE user_id = ?`,
-		time.Now().UTC().Format(time.RFC3339), userID)
-	return err
-}
+// The legacy user_sheets table is created above but is no longer read or
+// written: destinations (see destination.go) is the generalized replacement,
+// and store.Open backfills it from user_sheets on first boot. The old table is
+// retained so rolling back to the previous binary stays a binary swap.
 
 // --- single-use auth tokens (email verify, password reset) ---
 

@@ -1,12 +1,12 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Api } from "../api";
 import { Destination } from "../types";
 import { Button } from "./Button";
 import { Mark } from "./Mark";
 
 // Brand, Review/History nav with the queue badge, the New lead button, the
-// destination dropdown (incl. the disabled "Notion — coming soon" item), and
-// the account menu.
+// destination dropdown, and the account menu.
 export function TopBar({
   api,
   route,
@@ -57,7 +57,9 @@ export function TopBar({
 }
 
 function DestinationDropdown({ api }: { api: Api }) {
+  const nav = useNavigate();
   const [label, setLabel] = useState("Loading…");
+  const [needsReconnect, setNeedsReconnect] = useState(false);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -70,6 +72,7 @@ function DestinationDropdown({ api }: { api: Api }) {
         if (!alive) return;
         const active = destinations.find((d) => d.active);
         setLabel(active ? active.label + (active.dry_run ? " — dry run" : "") : "No destination");
+        setNeedsReconnect(!!active?.needs_reconnect);
         setDestinations(destinations);
       })
       .catch(() => {
@@ -79,6 +82,13 @@ function DestinationDropdown({ api }: { api: Api }) {
       alive = false;
     };
   }, [api]);
+
+  // Switching destination means walking that provider's connect flow; the
+  // switch only takes effect once it completes.
+  function switchTo(dest: Destination) {
+    setOpen(false);
+    nav(dest.type === "notion" ? "/onboarding-notion" : "/onboarding");
+  }
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -101,6 +111,11 @@ function DestinationDropdown({ api }: { api: Api }) {
           ▦
         </span>
         <span>{label}</span>
+        {needsReconnect && (
+          <span className="text-red-text text-xs" title="Reconnect needed">
+            •
+          </span>
+        )}
         <span className="text-text-2 text-[10px]" aria-hidden="true">
           ▾
         </span>
@@ -115,11 +130,21 @@ function DestinationDropdown({ api }: { api: Api }) {
               key={dest.id}
               type="button"
               disabled={!!dest.disabled}
+              onClick={() => (dest.active ? setOpen(false) : switchTo(dest))}
               className="flex items-center gap-2 w-full text-left text-text bg-transparent border-0 rounded-[6px] px-2.5 py-2 cursor-pointer enabled:hover:bg-bg disabled:text-text-2 disabled:cursor-default"
             >
               <span className="text-green-deep">{dest.type === "google_sheet" ? "▦" : "◆"}</span>
               <span>{dest.label}</span>
-              {dest.coming_soon && <span className="ml-auto text-text-2 text-xs">coming soon</span>}
+              {dest.active && dest.needs_reconnect && (
+                <span className="ml-auto text-red-text text-xs">reconnect</span>
+              )}
+              {dest.active && !dest.needs_reconnect && (
+                <span className="ml-auto text-text-2 text-xs">active</span>
+              )}
+              {!dest.active && !dest.unavailable && (
+                <span className="ml-auto text-text-2 text-xs">switch</span>
+              )}
+              {dest.unavailable && <span className="ml-auto text-text-2 text-xs">unavailable</span>}
             </button>
           ))}
         </div>

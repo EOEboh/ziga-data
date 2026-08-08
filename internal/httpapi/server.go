@@ -3,7 +3,6 @@
 package httpapi
 
 import (
-	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -11,30 +10,35 @@ import (
 	"sync"
 
 	"github.com/EOEboh/ziga-data/internal/config"
+	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/llm"
 	"github.com/EOEboh/ziga-data/internal/mail"
+	"github.com/EOEboh/ziga-data/internal/notionauth"
 	"github.com/EOEboh/ziga-data/internal/oauth"
 	"github.com/EOEboh/ziga-data/internal/secretbox"
 	"github.com/EOEboh/ziga-data/internal/store"
 	"google.golang.org/api/option"
 )
 
-// RowWriter appends rows to the destination sheet and reads the tail back
-// for the preview strip. Implemented by the sheets package; stubbed in tests.
-type RowWriter interface {
-	Append(ctx context.Context, row []string) error
-	LastRows(ctx context.Context, n int) ([][]string, error)
-}
-
 type Server struct {
 	cfg       *config.Config
 	log       *slog.Logger
 	extractor llm.Extractor
 	store     *store.Store
-	writer    RowWriter
-	mailer    mail.Mailer
-	oauth     *oauth.Config
-	// box encrypts OAuth tokens at rest; nil when Google OAuth is unconfigured.
+	// writer is the process-wide fallback destination, used only in dev /
+	// dry-run mode; every real write goes through a per-user writer resolved
+	// by writerFor.
+	writer destination.Writer
+	mailer mail.Mailer
+	oauth  *oauth.Config
+	// notionAuth is the Notion OAuth client; nil or unconfigured when Notion
+	// is not offered as a destination.
+	notionAuth *notionauth.Config
+	// notionBaseURL overrides the Notion API base (a test fake); empty in
+	// production.
+	notionBaseURL string
+	// box encrypts OAuth tokens at rest; nil when no OAuth provider is
+	// configured.
 	box *secretbox.Box
 	// sheetsOpts are extra Google API client options (a test endpoint override);
 	// empty in production.
@@ -58,9 +62,10 @@ type Server struct {
 	baseURL       string
 }
 
-func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w RowWriter, m mail.Mailer, oc *oauth.Config, box *secretbox.Box) *Server {
+func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w destination.Writer, m mail.Mailer, oc *oauth.Config, nc *notionauth.Config, box *secretbox.Box) *Server {
 	return &Server{
-		cfg: cfg, log: log, extractor: ex, store: st, writer: w, mailer: m, oauth: oc, box: box,
+		cfg: cfg, log: log, extractor: ex, store: st, writer: w, mailer: m,
+		oauth: oc, notionAuth: nc, box: box,
 		limiter:       newIPLimiter(cfg.RatePerMin),
 		loginLimiter:  newIPLimiterBurst(20, 5),
 		resetLimiter:  newIPLimiterBurst(6, 3),
@@ -103,6 +108,16 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	// Destination sheet connection (protected).
 	mux.Handle("POST /api/sheets/create", protected(s.handleSheetsCreate))
 	mux.Handle("POST /api/sheets/attach", protected(s.handleSheetsAttach))
+
+	// Notion destination (protected throughout: connecting Notion is never a
+	// sign-in, so the user is already known).
+	mux.Handle("GET /api/notion/start", protected(s.handleNotionStart))
+	mux.Handle("GET /api/notion/callback", protected(s.handleNotionCallback))
+	mux.Handle("POST /api/notion/disconnect", protected(s.handleNotionDisconnect))
+	mux.Handle("GET /api/notion/resources", protected(s.handleNotionResources))
+	mux.Handle("GET /api/notion/databases/{id}/mapping", protected(s.handleNotionMapping))
+	mux.Handle("POST /api/notion/databases/create", protected(s.handleNotionCreateDatabase))
+	mux.Handle("POST /api/notion/destination", protected(s.handleNotionSetDestination))
 
 	// Submission app (protected + user-scoped).
 	mux.Handle("POST /api/submit", s.rateLimit(protected(s.handleSubmit)))
