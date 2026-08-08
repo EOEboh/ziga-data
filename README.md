@@ -258,10 +258,12 @@ A public connection must be submitted for review before Notion serves its OAuth 
 |---|---|
 | Boot guards — partial config exits naming the missing vars; no config boots with Notion unoffered | no |
 | The whole UI flow — connect, create/pick, mapping, dropped fields, reconnect — via `?mock=1` | no |
-| Whether `api.notion.com/v1/oauth/authorize` accepts the client id (hit the consent URL and see whether it serves a page or rejects the client) | no — one request |
+| Whether `api.notion.com/v1/oauth/authorize` accepts the client id — hit the consent URL and see whether it forwards to `app.notion.com/install-integration` (accepted) or rejects the client | no — one request |
 | Token exchange, schema fetch, page create, select-option creation, revoked-access handling | **yes** |
 
 The last row is the one that validates this build's assumptions about Notion's response shapes, since every test runs against fakes built from the documentation.
+
+Checked on 2026-08-06 against a freshly created, **unsubmitted** connection: the authorize leg is already live. `GET /v1/oauth/authorize` returned `302` to `app.notion.com/install-integration` with `state` and `owner=user` preserved, and an unauthenticated visit lands on Notion's login page rather than an error — so a valid client id resolves before review. That does not prove the post-login consent screen renders for an unsubmitted connection, which is the next thing a real login settles.
 
 ### Why there is a mapping step
 
