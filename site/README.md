@@ -75,7 +75,7 @@ npx wrangler pages deploy site --project-name=zigadata
 - [ ] **Terms.** Review the marked block in `terms.html`, and fill the
       `[GOVERNING LAW / JURISDICTION]` placeholder. It is the one thing in there
       that cannot be inferred.
-- [ ] **Email.** `hello@zigadata.com` is printed on all three pages and is the
+- [ ] **Email.** `support@zigadata.com` is printed on all three pages and is the
       contact address in both legal documents, so it has to actually receive
       mail before you submit for Google verification. Cloudflare → your domain →
       **Email** → **Email Routing** → forward it to a real inbox. It is free.
