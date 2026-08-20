@@ -79,6 +79,29 @@ npx wrangler pages deploy site --project-name=zigadata
       contact address in both legal documents, so it has to actually receive
       mail before you submit for Google verification. Cloudflare → your domain →
       **Email** → **Email Routing** → forward it to a real inbox. It is free.
+
+      **Receiving and sending are separate problems.** Email Routing is
+      inbound only: it publishes MX records and forwards mail, and it cannot
+      send anything. Sending as `@zigadata.com` goes through Brevo, and that
+      needs the domain's SPF record to authorize Brevo's servers. Cloudflare
+      installs its own SPF record when you enable Routing, and a domain may
+      have only **one** SPF record — two is a permanent error that breaks
+      SPF entirely. So the Brevo include has to be merged into the existing
+      record rather than added alongside it:
+
+      ```
+      v=spf1 include:_spf.mx.cloudflare.net include:spf.brevo.com ~all
+      ```
+
+      Cloudflare will warn that Email Routing manages that record. Edit it
+      anyway — dropping the `_spf.mx.cloudflare.net` include would break
+      forwarding. DKIM is separate again: Brevo's `brevo1._domainkey` and
+      `brevo2._domainkey` records must also be present.
+
+      Each new address additionally needs its own Routing rule **and** to be
+      verified as a sender in Brevo — and Brevo mails the verification code
+      to that address, so create the Routing rule first or the code never
+      arrives.
 - [ ] **OAuth consent screen logo.** Upload `brand/png/oauth-logo-120.png` in the
       Google Cloud console so the consent screen matches the site. It is the same
       artwork as the favicon, and the branding must match for verification.

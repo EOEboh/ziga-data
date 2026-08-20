@@ -4,9 +4,11 @@ This runbook takes a fresh Ubuntu 24 box (the existing Hetzner CPX22 that alread
 runs hookdrop) to a running **staging** deployment of ziga-data. Follow it
 **top to bottom** — every step only depends on things created in earlier steps.
 
-**Scope of this pass:** staging only. DNS for `zigadata.com` is **not** flipped;
-the app is reached via an SSH tunnel (§f). Going live is §h; what is deliberately
-left for later is listed in §i.
+**Scope of this pass:** the box is deployed and DNS for `app.zigadata.com`
+**is** flipped, so the app is reachable over HTTPS; the SSH tunnel (§f) remains
+as a debugging path that bypasses Nginx. §h records what the flip involved.
+What is still outstanding is listed in §i — most importantly the CI deploy
+secrets, without which pushes to `main` never reach the box.
 
 All commands run as a sudo-capable admin user unless a step says otherwise.
 Replace every `<PLACEHOLDER>` with a real value — this repo contains no real
@@ -263,8 +265,8 @@ sudo chmod 644 /etc/ssl/cloudflare/zigadata.pem
 ```
 
 > These paths match the placeholders in `deploy/nginx-ziga.conf`. The cert is an
-> *origin* cert: it is only trusted by Cloudflare's edge, so it is meaningful
-> only after DNS is flipped (§h). It does no harm to install it now.
+> *origin* cert: it is only trusted by Cloudflare's edge, which is the live
+> serving path now that DNS is flipped (§h).
 
 ---
 
@@ -277,10 +279,9 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-> **Staging note:** until DNS is flipped, this block is inert — nothing resolves
-> `app.zigadata.com` to this box yet. It is installed now so the config is
-> versioned and ready. Daily staging access is via the SSH tunnel in §f, which
-> bypasses Nginx entirely.
+> **Note:** this block is live — `app.zigadata.com` resolves to this box
+> through Cloudflare. The SSH tunnel in §f still works and bypasses Nginx
+> entirely, which is the quickest way to tell an app fault from a proxy fault.
 
 ---
 
@@ -459,7 +460,9 @@ an unreadable config surfaces here instead of looking like a success.
 
 ## f. Daily staging access (SSH tunnel)
 
-Until DNS is flipped, reach the app by forwarding its local port over SSH:
+`app.zigadata.com` serves the app directly, but forwarding its local port over
+SSH bypasses Cloudflare and Nginx, which isolates the app from the proxy layer
+when debugging:
 
 ```bash
 ssh -L 8080:localhost:8090 <DEPLOY_USER>@<HOST>
@@ -580,10 +583,17 @@ true`, and a real Google sign-in completes without `redirect_uri_mismatch`.
 
 ## i. Deliberately NOT done in this pass
 
-- **DNS flip** — `app.zigadata.com` is not yet pointed at this box. Until it is,
-  the app is reachable only through the SSH tunnel (§f). The switch-over is §h.
-- **SMTP** — no provider configured; verification links are read from the
-  journal (§a.1).
+- **CI deploy secrets** — `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_SSH_KEY`
+  are **not set** on the repository, so the deploy job in
+  `.github/workflows/deploy.yml` fails at the SSH step on every push to `main`
+  (`can't connect without a private SSH key or password`). The binary on the
+  box is therefore whatever was last installed by hand, not what `main`
+  contains. Fixing this is §g.
+- **SMTP** — no provider configured on the box; verification links are read
+  from the journal (§a.1). Note the *domain* is now able to send (see the
+  sending-vs-receiving note in `site/README.md`); what is missing is
+  `SMTP_HOST`/`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM` in
+  `/opt/ziga/ziga.env`.
 - **Nginx / TLS** — the server block in `deploy/nginx-ziga.conf` (upstream
   `127.0.0.1:8090`) and the Cloudflare origin cert are for the DNS flip (§h), not
   for staging.
