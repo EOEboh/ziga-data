@@ -563,3 +563,69 @@ func TestNewRequiresVersionAndToken(t *testing.T) {
 		t.Fatal("a client without an API version must be refused")
 	}
 }
+
+// TestGrantedResourcesSchemaTitleObject covers the shape a real workspace
+// returns and the fakes did not. In a `page` result, `properties.<name>.title`
+// is an ARRAY of rich-text spans. In a `data_source` result the same key is the
+// property *schema*, where `title` is an empty OBJECT — the type descriptor,
+// not a value.
+//
+// Decoding that field as []richText unconditionally made the whole /search
+// response fail to unmarshal, so GrantedResources returned an error and
+// /api/notion/resources 502'd for every user who had granted a database:
+//
+//	json: cannot unmarshal object into Go struct field
+//	.results.properties.title of type []notion.richText
+func TestGrantedResourcesSchemaTitleObject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		filter, _ := body["filter"].(map[string]any)
+		w.Header().Set("Content-Type", "application/json")
+
+		if filter["value"] == "data_source" {
+			// A data source: top-level title array, plus a schema whose title
+			// property carries an empty object.
+			w.Write([]byte(`{"results":[{
+				"id":"ds-1","object":"data_source",
+				"title":[{"plain_text":"Leads DB"}],
+				"parent":{"type":"database_id","database_id":"db-1"},
+				"properties":{"Name":{"id":"title","name":"Name","type":"title","title":{}}}
+			}]}`))
+			return
+		}
+		// A page: no top-level title; the name lives in the title property as
+		// an array of spans.
+		w.Write([]byte(`{"results":[{
+			"id":"page-1","object":"page",
+			"parent":{"type":"workspace"},
+			"properties":{"title":{"id":"title","type":"title","title":[{"plain_text":"My Page"}]}}
+		}]}`))
+	}))
+	defer srv.Close()
+
+	c, err := New("ntn-token", "ws-1", testVersion, srv.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	dbs, pages, err := c.GrantedResources(context.Background())
+	if err != nil {
+		t.Fatalf("GrantedResources: %v", err)
+	}
+	if len(dbs) != 1 {
+		t.Fatalf("databases = %d, want 1", len(dbs))
+	}
+	if dbs[0].Title != "Leads DB" {
+		t.Errorf("database title = %q, want %q", dbs[0].Title, "Leads DB")
+	}
+	if dbs[0].ID != "db-1" || dbs[0].DataSourceID != "ds-1" {
+		t.Errorf("database ids = (%s, %s), want (db-1, ds-1)", dbs[0].ID, dbs[0].DataSourceID)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("pages = %d, want 1", len(pages))
+	}
+	if pages[0].Title != "My Page" {
+		t.Errorf("page title = %q, want %q — the array form must still decode", pages[0].Title, "My Page")
+	}
+}

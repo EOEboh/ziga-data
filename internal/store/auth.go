@@ -78,7 +78,7 @@ func createAuthTables(db *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS oauth_accounts (
 			user_id           INTEGER NOT NULL,
 			provider          TEXT NOT NULL,
-			provider_sub      TEXT NOT NULL UNIQUE,
+			provider_sub      TEXT NOT NULL,
 			access_token_enc  BLOB,
 			refresh_token_enc BLOB,
 			token_expiry      TEXT,
@@ -93,6 +93,12 @@ func createAuthTables(db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			expires_at TEXT NOT NULL
 		);
+		-- A sign-in provider's subject identifies a person, so it must map to
+		-- exactly one user. Notion is deliberately excluded: its subject is a
+		-- per-install bot id, not an identity, and two users may legitimately
+		-- connect the same workspace as a destination.
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_signin_sub
+			ON oauth_accounts(provider, provider_sub) WHERE provider = 'google';
 		CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 		CREATE TABLE IF NOT EXISTS user_sheets (
 			user_id        INTEGER PRIMARY KEY,

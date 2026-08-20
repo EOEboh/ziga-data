@@ -274,3 +274,85 @@ func TestMigrateOAuthAccountsRenamesGoogleSub(t *testing.T) {
 		t.Fatalf("a notion link must not satisfy a google sign-in, got %v", err)
 	}
 }
+
+// TestMigrateOAuthDropsGlobalSubUnique covers the in-place upgrade of a
+// database that still carries the Google-era column-level UNIQUE on
+// provider_sub. That constraint blocked a second user from connecting a Notion
+// workspace another user had already connected, because Notion's subject is a
+// per-install bot id rather than an identity.
+//
+// The rebuild must preserve every existing row, drop the global constraint,
+// and keep Google subjects unique.
+func TestMigrateOAuthDropsGlobalSubUnique(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth-unique-legacy.db")
+	ctx := context.Background()
+
+	// A database as the previous build left it: provider_sub globally UNIQUE.
+	func() {
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.db.Exec(`DROP TABLE oauth_accounts`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`
+			CREATE TABLE oauth_accounts (
+				user_id           INTEGER NOT NULL,
+				provider          TEXT NOT NULL,
+				provider_sub      TEXT NOT NULL UNIQUE,
+				access_token_enc  BLOB,
+				refresh_token_enc BLOB,
+				token_expiry      TEXT,
+				scopes            TEXT,
+				connected_at      TEXT NOT NULL,
+				broken_at         TEXT,
+				PRIMARY KEY (user_id, provider)
+			)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`
+			INSERT INTO oauth_accounts (user_id, provider, provider_sub, access_token_enc,
+				refresh_token_enc, token_expiry, scopes, connected_at, broken_at)
+			VALUES (5, 'notion', 'bot-shared', ?, NULL, NULL, 'notion:granted-resources', ?, NULL)`,
+			[]byte("enc-existing"), time.Now().UTC().Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st.Close()
+
+	// The pre-existing row survived the rebuild.
+	acct, err := st.GetOAuthAccount(ctx, 5, "notion")
+	if err != nil {
+		t.Fatalf("existing row lost in migration: %v", err)
+	}
+	if string(acct.AccessTokenEnc) != "enc-existing" || acct.ProviderSub != "bot-shared" {
+		t.Errorf("migrated row = %+v, want the original token and subject", acct)
+	}
+
+	// A second user may now connect the same Notion workspace.
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: 6, Provider: "notion", ProviderSub: "bot-shared",
+		AccessTokenEnc: []byte("enc-second"),
+	}); err != nil {
+		t.Fatalf("second user on the shared workspace: %v", err)
+	}
+
+	// Google subjects are still one-to-one.
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: 8, Provider: "google", ProviderSub: "g-1", AccessTokenEnc: []byte("a"),
+	}); err != nil {
+		t.Fatalf("first google link: %v", err)
+	}
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: 9, Provider: "google", ProviderSub: "g-1", AccessTokenEnc: []byte("b"),
+	}); err == nil {
+		t.Fatal("two users share a Google subject after migration; want an error")
+	}
+}

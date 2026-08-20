@@ -175,7 +175,114 @@ func migrateOAuthAccounts(db *sql.DB) error {
 			return fmt.Errorf("rename google_sub: %w", err)
 		}
 	}
-	return nil
+	return migrateOAuthSubUniqueness(db)
+}
+
+// migrateOAuthSubUniqueness drops the table-wide UNIQUE on provider_sub in
+// favour of an index that only constrains sign-in providers.
+//
+// The column-level UNIQUE was inherited from the Google-only schema, where the
+// subject is an identity and must map to one user. A Notion subject is a bot
+// id — a per-install handle for a destination, never a sign-in — so two users
+// connecting the same workspace both present it, and the global constraint
+// rejected the second with "UNIQUE constraint failed: oauth_accounts.
+// provider_sub", surfacing as an opaque notion_error=server.
+//
+// SQLite cannot drop a column constraint in place, so the table is rebuilt.
+// This is a no-op once the old index is gone, so it is safe on every boot.
+func migrateOAuthSubUniqueness(db *sql.DB) error {
+	legacy, err := hasBareUniqueIndexOn(db, "oauth_accounts", "provider_sub")
+	if err != nil || !legacy {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE TABLE oauth_accounts_new (
+			user_id           INTEGER NOT NULL,
+			provider          TEXT NOT NULL,
+			provider_sub      TEXT NOT NULL,
+			access_token_enc  BLOB,
+			refresh_token_enc BLOB,
+			token_expiry      TEXT,
+			scopes            TEXT,
+			connected_at      TEXT NOT NULL,
+			broken_at         TEXT,
+			PRIMARY KEY (user_id, provider)
+		)`,
+		`INSERT INTO oauth_accounts_new
+			(user_id, provider, provider_sub, access_token_enc, refresh_token_enc,
+			 token_expiry, scopes, connected_at, broken_at)
+		 SELECT user_id, provider, provider_sub, access_token_enc, refresh_token_enc,
+			 token_expiry, scopes, connected_at, broken_at FROM oauth_accounts`,
+		`DROP TABLE oauth_accounts`,
+		`ALTER TABLE oauth_accounts_new RENAME TO oauth_accounts`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_signin_sub
+			ON oauth_accounts(provider, provider_sub) WHERE provider = 'google'`,
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("rebuild oauth_accounts: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// hasBareUniqueIndexOn reports whether table has a UNIQUE index whose only
+// column is col — the shape a column-level UNIQUE produces.
+func hasBareUniqueIndexOn(db *sql.DB, table, col string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT name, "unique" FROM pragma_index_list(%q)`, table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		var uniq int
+		if err := rows.Scan(&name, &uniq); err != nil {
+			return false, err
+		}
+		if uniq == 1 {
+			names = append(names, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	for _, name := range names {
+		cols, err := indexColumns(db, name)
+		if err != nil {
+			return false, err
+		}
+		if len(cols) == 1 && cols[0] == col {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func indexColumns(db *sql.DB, index string) ([]string, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT name FROM pragma_index_info(%q)`, index))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var name sql.NullString
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		if name.Valid {
+			cols = append(cols, name.String)
+		}
+	}
+	return cols, rows.Err()
 }
 
 // columns returns the column names of a table, for the ADD/RENAME COLUMN

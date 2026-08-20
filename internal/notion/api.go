@@ -2,6 +2,7 @@ package notion
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -204,9 +205,14 @@ func (c *Client) search(ctx context.Context, objectType string) ([]Resource, err
 				Type       string `json:"type"`
 				DatabaseID string `json:"database_id"`
 			} `json:"parent"`
+			// `title` is decoded lazily: on a page result it is an array of
+			// rich-text spans (the page's name), but on a data_source result
+			// the same key is the property *schema*, where it is an empty
+			// object. Decoding it as []richText unconditionally fails the
+			// whole response.
 			Properties map[string]struct {
-				Type  string     `json:"type"`
-				Title []richText `json:"title"`
+				Type  string          `json:"type"`
+				Title json.RawMessage `json:"title"`
 			} `json:"properties"`
 		} `json:"results"`
 	}
@@ -221,10 +227,18 @@ func (c *Client) search(ctx context.Context, objectType string) ([]Resource, err
 			// A page's name lives in its title property rather than a
 			// top-level title array.
 			for _, p := range r.Properties {
-				if p.Type == TypeTitle {
-					res.Title = plainText(p.Title)
-					break
+				if p.Type != TypeTitle {
+					continue
 				}
+				// Only the array form carries a name; the schema's object
+				// form has none, which leaves the "(untitled)" fallback.
+				if len(p.Title) > 0 && p.Title[0] == '[' {
+					var spans []richText
+					if err := json.Unmarshal(p.Title, &spans); err == nil {
+						res.Title = plainText(spans)
+					}
+				}
+				break
 			}
 		}
 		if res.Title == "" {
