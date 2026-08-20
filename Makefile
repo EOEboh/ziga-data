@@ -19,7 +19,7 @@ ui-build:
 	npm --prefix web run build
 
 ui-check:
-	npx tsc --noEmit -p web
+	npm --prefix web run check
 
 build: ui-build
 	go build ./...
