@@ -168,3 +168,115 @@ func TestAuthTokenSingleUse(t *testing.T) {
 		t.Fatalf("expired consume must fail: %v", err)
 	}
 }
+
+// TestUpsertOAuthAccountReconnectSameSub covers reconnecting a provider the
+// user has already linked, which is what every Notion reconnect does.
+//
+// oauth_accounts carries TWO unique indexes: PRIMARY KEY (user_id, provider)
+// and a standalone UNIQUE on provider_sub. The upsert only names the first as
+// its conflict target, but SQLite checks the provider_sub index first, so a
+// re-link with the same subject aborted before the ON CONFLICT clause could
+// apply:
+//
+//	UNIQUE constraint failed: oauth_accounts.provider_sub (2067)
+//
+// In production this meant the first Notion connect succeeded and every
+// reconnect after it failed with notion_error=server.
+func TestUpsertOAuthAccountReconnectSameSub(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+	u, _ := st.CreateUser(ctx, "reconnect@example.com", "")
+	uid := u.ID
+
+	first := &OAuthAccount{
+		UserID: uid, Provider: "notion", ProviderSub: "bot-abc",
+		AccessTokenEnc: []byte("enc-v1"), Scopes: "notion:granted-resources",
+	}
+	if err := st.UpsertOAuthAccount(ctx, first); err != nil {
+		t.Fatalf("first connect: %v", err)
+	}
+
+	// Same user, same provider, same bot id, a freshly issued token.
+	again := &OAuthAccount{
+		UserID: uid, Provider: "notion", ProviderSub: "bot-abc",
+		AccessTokenEnc: []byte("enc-v2"), Scopes: "notion:granted-resources",
+	}
+	if err := st.UpsertOAuthAccount(ctx, again); err != nil {
+		t.Fatalf("reconnect with same provider_sub: %v", err)
+	}
+
+	got, err := st.GetOAuthAccount(ctx, uid, "notion")
+	if err != nil {
+		t.Fatalf("GetOAuthAccount: %v", err)
+	}
+	if string(got.AccessTokenEnc) != "enc-v2" {
+		t.Errorf("access token = %q, want the reconnect's %q", got.AccessTokenEnc, "enc-v2")
+	}
+}
+
+// TestUpsertOAuthAccountTwoUsersSameNotionWorkspace covers two different Ziga
+// users connecting the SAME Notion workspace. Notion issues one bot id per
+// install, so both users legitimately present the same provider_sub.
+//
+// oauth_accounts declared provider_sub globally UNIQUE, which is the right
+// identity rule for Google (that subject is how sign-in resolves a user) but
+// wrong for Notion, which the code is explicit is "never a sign-in, only ever
+// a destination". The second user's connect aborted with:
+//
+//	UNIQUE constraint failed: oauth_accounts.provider_sub (2067)
+//
+// surfacing as notion_error=server with nothing actionable for the user.
+func TestUpsertOAuthAccountTwoUsersSameNotionWorkspace(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+	a, _ := st.CreateUser(ctx, "teammate-a@example.com", "")
+	b, _ := st.CreateUser(ctx, "teammate-b@example.com", "")
+
+	const sharedBot = "bot-shared-workspace"
+
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: a.ID, Provider: "notion", ProviderSub: sharedBot,
+		AccessTokenEnc: []byte("enc-a"),
+	}); err != nil {
+		t.Fatalf("first user connect: %v", err)
+	}
+
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: b.ID, Provider: "notion", ProviderSub: sharedBot,
+		AccessTokenEnc: []byte("enc-b"),
+	}); err != nil {
+		t.Fatalf("second user connecting the same workspace: %v", err)
+	}
+
+	// Each user keeps their own token for the shared workspace.
+	gotA, err := st.GetOAuthAccount(ctx, a.ID, "notion")
+	if err != nil || string(gotA.AccessTokenEnc) != "enc-a" {
+		t.Errorf("user A token = %q err=%v, want enc-a", gotA.AccessTokenEnc, err)
+	}
+	gotB, err := st.GetOAuthAccount(ctx, b.ID, "notion")
+	if err != nil || string(gotB.AccessTokenEnc) != "enc-b" {
+		t.Errorf("user B token = %q err=%v, want enc-b", gotB.AccessTokenEnc, err)
+	}
+}
+
+// TestUpsertOAuthAccountGoogleSubStaysUnique guards the other half: a Google
+// subject is a sign-in identity, so it must never map to two users.
+func TestUpsertOAuthAccountGoogleSubStaysUnique(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+	a, _ := st.CreateUser(ctx, "g-a@example.com", "")
+	b, _ := st.CreateUser(ctx, "g-b@example.com", "")
+
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: a.ID, Provider: "google", ProviderSub: "google-shared",
+		AccessTokenEnc: []byte("enc-a"),
+	}); err != nil {
+		t.Fatalf("first google link: %v", err)
+	}
+	if err := st.UpsertOAuthAccount(ctx, &OAuthAccount{
+		UserID: b.ID, Provider: "google", ProviderSub: "google-shared",
+		AccessTokenEnc: []byte("enc-b"),
+	}); err == nil {
+		t.Fatal("second user claimed the same Google subject; want a uniqueness error")
+	}
+}
