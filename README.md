@@ -406,17 +406,24 @@ the dedup keys, the review queue, and history. The Google Sheet only holds
 confirmed rows, so it is not a substitute for backing up the database. See the
 runbook's backup + restore-test section.
 
-> **Staging note:** auth has landed, so the blocker the RUNBOOK describes is
-> cleared. DNS for `app.zigadata.com` is still not flipped and access remains
-> via the SSH tunnel; what is left before the flip is production configuration
-> rather than code — a real OAuth client with its redirect URI, `SESSION_SECRET`
-> and `TOKEN_ENCRYPTION_KEY` in `/opt/ziga/ziga.env`, and working SMTP so
-> verification mail is delivered instead of logged. See RUNBOOK §h.
+> **Deployment note:** DNS for `app.zigadata.com` **is** flipped — the host
+> resolves through Cloudflare and serves the app over HTTPS, so the SSH tunnel
+> is no longer the only access path. What remains is not code:
+>
+> - the three GitHub Actions secrets (`DEPLOY_HOST`, `DEPLOY_USER`,
+>   `DEPLOY_SSH_KEY`) so the deploy job can reach the box — until they exist,
+>   every push to `main` fails at the SSH step and the running binary stays
+>   whatever was last installed by hand. See RUNBOOK §g.
+> - production configuration in `/opt/ziga/ziga.env`: a real OAuth client with
+>   its redirect URI, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, the
+>   `NOTION_OAUTH_*` trio, and SMTP so verification mail is delivered rather
+>   than logged. See RUNBOOK §h.
 
 ## Local staging access
 
-Until DNS is flipped, the deployed app is reached over an SSH tunnel. One command
-opens a verified one:
+`app.zigadata.com` serves the deployed app directly. The SSH tunnel below stays
+useful for reaching it past Cloudflare and Nginx when isolating a fault. One
+command opens a verified one:
 
 ```sh
 make tunnel        # opens it, holds it open — Ctrl+C to close
