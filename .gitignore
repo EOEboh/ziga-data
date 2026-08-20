@@ -11,3 +11,6 @@ service-account*.json
 /ziga
 /dist/
 node_modules/
+
+# Claude Code local settings (contains deploy host; personal to this machine)
+.claude/settings.local.json
