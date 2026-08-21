@@ -599,6 +599,11 @@ true`, and a real Google sign-in completes without `redirect_uri_mismatch`.
   for staging.
 - **Marketing site** — `zigadata.com` apex / marketing pages are a separate
   effort, unrelated to this app deployment.
+- **Email ingestion** — the code ships, but nothing is configured on the box:
+  `INBOUND_EMAIL_DOMAIN` is unset, so the ingestion endpoint is not mounted and
+  the UI never offers a capture address. Turning it on is §k, and it also needs
+  the `CLOUDFLARE_API_TOKEN` secret on the repository for the Worker's own
+  deploy workflow.
 
 ---
 
@@ -613,7 +618,7 @@ detect drift.
 | `/opt/ziga/ziga.prev` | ziga 755 | previous binary, kept for one-step rollback (§g / workflow) |
 | `/opt/ziga/ziga.env` | ziga 600 | all runtime configuration (secrets) |
 | `/opt/ziga/config/schema.json` | ziga 640 | extraction schema, read from disk at boot |
-| `/opt/ziga/ziga.db` | ziga 640* | SQLite database — the only persistent state; group-readable so the backup can snapshot it (§e) |
+| `/opt/ziga/ziga.db` | ziga 640* | SQLite database — the only persistent state; group-readable so the backup can snapshot it (§e). Includes the email ingestion tables (`inbound_addresses`, `ingestion_events`, `blocked_senders`), so the nightly backup already covers them |
 | `/opt/ziga/ziga.db-journal` | ziga | transient rollback journal (present only mid-write) |
 | `/opt/ziga/backup.sh` | deploy 750 | nightly backup script (same name/position as `/opt/hookdrop/backup.sh`) |
 | `/etc/systemd/system/ziga.service` | root 644 | systemd unit |
@@ -639,3 +644,153 @@ Owned by hookdrop, listed only so a drift audit does not mistake them for ziga's
 \* the app creates `ziga.db` on first boot with the process umask; it is written
 only by the ziga user inside `/opt/ziga` (the sole `ReadWritePaths` in the unit).
 §e widens it to 640 and adds `deploy` to the `ziga` group so the backup can read it.
+
+## k. Email ingestion (optional)
+
+Gives each user a private capture address on a subdomain. Skip this whole
+section and the feature is simply not offered: with `INBOUND_EMAIL_DOMAIN`
+unset, the ingestion endpoint is never mounted and the UI never shows it.
+
+### k.1 The gotcha: there is no catch-all on a subdomain
+
+Cloudflare supports a catch-all rule **only at a zone apex**. A subdomain gets
+Email Routing enabled separately and supports explicit per-address rules only,
+capped at **200 rules per domain**.
+
+That is why capture addresses live on a subdomain at all: enabling Email
+Routing rewrites MX records for whatever domain it is enabled on, and the apex
+(`zigadata.com`) already receives real mail. Enabling it on `in.zigadata.com`
+adds MX records **to the subdomain only** — the apex's existing `support@` rule
+is untouched.
+
+The consequence is that Ziga creates one routing rule per address through the
+Cloudflare API, and rules are a capped resource. `INGEST_MAX_ADDRESSES`
+(default 180) refuses provisioning before Cloudflare does, so an operator gets
+a clear message and a log line instead of an opaque rejection at the moment
+capacity runs out. Cloudflare raises the limit on request — raise both together.
+
+### k.2 Enable Email Routing on the subdomain
+
+In the Cloudflare dashboard, on the `zigadata.com` zone:
+
+1. **Email → Email Routing → Settings**, find the subdomain list, and add
+   `in.zigadata.com`. Cloudflare adds the MX records for that subdomain.
+2. Wait for the records to propagate. Confirm from the box:
+
+```sh
+dig +short MX in.zigadata.com
+# expect route1.mx.cloudflare.net. et al
+dig +short MX zigadata.com
+# expect UNCHANGED — whatever the apex used before
+```
+
+That second check is the one that matters. If the apex MX changed, stop and
+revert: the marketing domain's mail is now going somewhere else.
+
+3. Verify a **destination address** for the Worker's fallback (Email →
+   Destination addresses). `forward()` throws on an unverified address, which
+   would turn the safety net into a second failure. `wrangler.jsonc`'s
+   `FALLBACK_ADDRESS` must be exactly this verified address.
+
+### k.3 Cloudflare API token
+
+**My Profile → API Tokens → Create Token → Custom token**:
+
+- Permissions: `Zone` → `Email Routing Rules` → `Edit`
+- Zone Resources: Include → Specific zone → `zigadata.com`
+
+Nothing broader. This token can create and delete mail routing rules on the
+zone, and that is all it should be able to do.
+
+### k.4 Deploy the Worker
+
+```sh
+cd worker/email-ingest
+npm ci
+npm test                      # includes the cross-language corpus + HMAC vector
+npx wrangler deploy
+npx wrangler secret put ZIGA_INGEST_SECRET
+```
+
+Generate the shared secret once and use the same value in both places:
+
+```sh
+head -c 32 /dev/urandom | base64
+```
+
+### k.5 App configuration
+
+Add to `/opt/ziga/ziga.env` (mode 600), then `sudo systemctl restart ziga`:
+
+```sh
+INBOUND_EMAIL_DOMAIN=in.zigadata.com
+INGEST_SHARED_SECRET=<the same value given to wrangler secret>
+CLOUDFLARE_API_TOKEN=<the scoped token from k.3>
+CLOUDFLARE_ZONE_ID=<zone id from the Cloudflare dashboard overview>
+# Optional, defaults shown:
+# INGEST_WORKER_NAME=ziga-email-ingest
+# INGEST_DAILY_CAP=50
+# INGEST_BURST=10
+# INGEST_MAX_ADDRESSES=180
+```
+
+These are **all-or-nothing**: partial configuration refuses to boot. A domain
+with no shared secret would mount an ingestion endpoint with nothing to
+authenticate against, and a secret with no Cloudflare credentials would hand
+users an address no mail can ever reach. A secret shorter than 32 characters is
+also a boot error, not a warning.
+
+Confirm it came up:
+
+```sh
+sudo journalctl -u ziga -n 30 --no-pager | grep 'email ingestion enabled'
+```
+
+### k.6 Verify end to end
+
+1. In the app, open the account menu → **Email capture** → *Turn on email
+   capture*. Confirm the matching rule appears in Cloudflare (Email → Email
+   Routing → Routing rules).
+2. Send a plain lead email to the address. It should appear in the review queue
+   within seconds, badged **Email**, with the sender and subject shown.
+3. Set up a real Gmail auto-forward to it. The confirmation code should appear
+   on the setup page within a few seconds — that is the step users cannot
+   complete without us. Finish it, then forward a labelled lead and confirm it
+   is attributed to the **original sender**, not to your own Gmail address.
+4. Send a newsletter and an out-of-office. Both should land in **Filtered** with
+   the right reason. Rescue one and confirm it enters the review queue.
+5. Send the same message twice — exactly one lead.
+6. `sudo systemctl stop ziga`, send a lead, confirm it lands in the fallback
+   mailbox with `X-Ziga-*` headers, then `sudo systemctl start ziga`.
+
+### k.7 Triage: "leads stopped arriving"
+
+In this order — the first is by far the most likely:
+
+```sh
+# 1. Did the shared secret drift? This is the classic failure and its ONLY
+#    symptom is 401s; nothing in the product looks broken.
+sudo journalctl -u ziga --since '1 hour ago' | grep 'rejected unauthenticated'
+
+# 2. What did the Worker see?
+cd worker/email-ingest && npx wrangler tail
+
+# 3. Did the user hit their daily cap? (Their mail is in quarantine, not lost.)
+sudo journalctl -u ziga --since today | grep 'per-user cap reached'
+
+# 4. Did addresses and routing rules drift apart?
+sudo journalctl -u ziga -n 200 --no-pager | grep 'inbound:'
+```
+
+If the secret drifted, re-run `wrangler secret put ZIGA_INGEST_SECRET` with the
+value from `ziga.env` — no lead is lost in the meantime, they are in the
+fallback mailbox.
+
+### k.8 Note on the capture addresses
+
+They are stored in plaintext in `inbound_addresses.local_part`, because the UI
+has to display them. An address is a capability: anyone who knows one can spend
+that tenant's extraction budget. That is bounded by 80 bits of entropy, a
+per-address rate limit applied before the database lookup, and the per-user
+daily cap — but it is worth knowing that a database read yields live capture
+addresses.
