@@ -44,7 +44,26 @@ type Submission struct {
 	Error          string
 	CreatedAt      time.Time
 	SettledAt      time.Time // when the submission reached written or discarded; zero otherwise
+
+	// Source is the channel this lead arrived on. Note this is the *channel*
+	// (paste vs email) and is unrelated to the schema's own "source" field,
+	// which records where the lead says it came from ("X DM", "referral") and
+	// lives inside the Extraction blob.
+	Source Source
+	// The remaining fields are the email envelope, zero for pasted submissions.
+	MessageID   string
+	FromAddress string
+	Subject     string
+	ReceivedAt  time.Time
 }
+
+// Source is the channel a submission arrived on.
+type Source string
+
+const (
+	SourcePaste Source = "paste"
+	SourceEmail Source = "email"
+)
 
 type Store struct {
 	db *sql.DB
@@ -82,6 +101,10 @@ func Open(path string) (*Store, error) {
 	if err := createAuthTables(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate auth: %w", err)
+	}
+	if err := createIngestTables(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate ingest: %w", err)
 	}
 	if err := migrate(db); err != nil {
 		db.Close()
@@ -123,6 +146,12 @@ func migrate(db *sql.DB) error {
 		"input_image_type": "TEXT",
 		"settled_at":       "TEXT",
 		"user_id":          "INTEGER",
+		// Email ingestion: the channel plus the envelope of an ingested mail.
+		"source":       "TEXT",
+		"message_id":   "TEXT",
+		"from_address": "TEXT",
+		"subject":      "TEXT",
+		"received_at":  "TEXT",
 	} {
 		if !have[col] {
 			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE submissions ADD COLUMN %s %s`, col, typ)); err != nil {
@@ -135,11 +164,42 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	// Every row predating email ingestion is a paste. Backfilling means source
+	// is never NULL going forward, so readers never need a COALESCE.
+	if _, err := db.Exec(`UPDATE submissions SET source = ? WHERE source IS NULL OR source = ''`, SourcePaste); err != nil {
+		return err
+	}
+
 	// The per-tenant queue index is created here, after the user_id column is
 	// guaranteed to exist (it may have just been added above), so upgrading an
 	// old database doesn't index a missing column.
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_submissions_user_status ON submissions(user_id, status)`); err != nil {
 		return err
+	}
+
+	// Message-ID dedup lookup, created after the column is guaranteed present
+	// for the same reason as the index above.
+	//
+	// Deliberately NOT unique: Discard rewrites content_hash to a tombstone so
+	// the same content can be resubmitted, and a unique message_id would
+	// outlive that, permanently blocking a re-forward of a lead the user
+	// discarded by accident. The content_hash UNIQUE remains the atomic
+	// guarantee; this index only makes FindByMessageID cheap.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_submissions_user_message ON submissions(user_id, message_id)`); err != nil {
+		return err
+	}
+
+	// queue_seen_at powers the "captured while you were away" count, and lives
+	// on users so it follows the account across devices rather than sitting in
+	// browser storage.
+	userCols, err := columns(db, "users")
+	if err != nil {
+		return err
+	}
+	if !userCols["queue_seen_at"] {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN queue_seen_at TEXT`); err != nil {
+			return err
+		}
 	}
 
 	// Rows settled before settled_at existed: approximate with created_at so
@@ -216,8 +276,13 @@ func ContentHash(userID int64, text string, image []byte, submitted time.Time) s
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// submissionCols is the column list every submission read selects, in the
+// order scanSubmission scans them. The two are coupled positionally with
+// nothing enforcing it, so they must be edited together — append new columns
+// to the end of BOTH.
 const submissionCols = `id, user_id, content_hash, status, extraction, flags, input_excerpt,
-	input_text, input_image, input_image_type, error, created_at, settled_at`
+	input_text, input_image, input_image_type, error, created_at, settled_at,
+	source, message_id, from_address, subject, received_at`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -228,8 +293,10 @@ func scanSubmission(row scanner) (*Submission, error) {
 	var createdAt string
 	var userID sql.NullInt64
 	var extraction, flags, excerpt, inputText, imageType, errMsg, settledAt sql.NullString
+	var source, messageID, fromAddress, subject, receivedAt sql.NullString
 	if err := row.Scan(&sub.ID, &userID, &sub.ContentHash, &sub.Status, &extraction, &flags,
-		&excerpt, &inputText, &sub.InputImage, &imageType, &errMsg, &createdAt, &settledAt); err != nil {
+		&excerpt, &inputText, &sub.InputImage, &imageType, &errMsg, &createdAt, &settledAt,
+		&source, &messageID, &fromAddress, &subject, &receivedAt); err != nil {
 		return nil, err
 	}
 	sub.UserID = userID.Int64
@@ -242,6 +309,17 @@ func scanSubmission(row scanner) (*Submission, error) {
 	sub.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	if settledAt.Valid {
 		sub.SettledAt, _ = time.Parse(time.RFC3339, settledAt.String)
+	}
+	// Rows written before email ingestion have no source; they are all pastes.
+	sub.Source = Source(source.String)
+	if sub.Source == "" {
+		sub.Source = SourcePaste
+	}
+	sub.MessageID = messageID.String
+	sub.FromAddress = fromAddress.String
+	sub.Subject = subject.String
+	if receivedAt.Valid {
+		sub.ReceivedAt, _ = time.Parse(time.RFC3339, receivedAt.String)
 	}
 	return &sub, nil
 }
@@ -279,14 +357,23 @@ func (s *Store) Get(ctx context.Context, userID, id int64) (*Submission, error) 
 // insert is a no-op and duplicate=true.
 func (s *Store) Insert(ctx context.Context, sub *Submission) (duplicate bool, err error) {
 	sub.CreatedAt = time.Now().UTC()
+	if sub.Source == "" {
+		sub.Source = SourcePaste
+	}
+	var receivedAt any
+	if !sub.ReceivedAt.IsZero() {
+		receivedAt = sub.ReceivedAt.UTC().Format(time.RFC3339)
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO submissions (user_id, content_hash, status, extraction, flags, input_excerpt,
-			input_text, input_image, input_image_type, error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			input_text, input_image, input_image_type, error, created_at,
+			source, message_id, from_address, subject, received_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(content_hash) DO NOTHING`,
 		sub.UserID, sub.ContentHash, sub.Status, string(sub.Extraction), string(sub.Flags),
 		sub.InputExcerpt, sub.InputText, sub.InputImage, sub.InputImageType,
-		sub.Error, sub.CreatedAt.Format(time.RFC3339))
+		sub.Error, sub.CreatedAt.Format(time.RFC3339),
+		sub.Source, sub.MessageID, sub.FromAddress, sub.Subject, receivedAt)
 	if err != nil {
 		return false, err
 	}

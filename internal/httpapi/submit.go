@@ -90,8 +90,12 @@ func parseSubmission(r *http.Request) (text string, image []byte, mediaType stri
 	return text, image, mediaType, ""
 }
 
-// handleSubmit extracts a lead and stores it as pending. Nothing is written
-// to the sheet here — that only happens on an explicit confirm.
+// handleSubmit extracts a pasted lead and stores it as pending. Nothing is
+// written to the destination here — that only happens on an explicit confirm.
+//
+// The work happens in ingestLead, shared with the email ingestion path; this
+// handler is the paste-specific shell around it: parse the multipart form, and
+// map failures onto HTTP.
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	uid := userID(r)
@@ -102,71 +106,36 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	hash := store.ContentHash(uid, text, image, now)
-	log := s.log.With("hash", hash[:12])
+	log := s.log.With("hash", store.ContentHash(uid, text, image, now)[:12])
 
-	// Idempotency: an identical submission today returns the prior outcome
-	// without another LLM call.
-	if prior, err := s.store.FindByHash(ctx, uid, hash); err != nil {
-		log.Error("dedup lookup failed", "err", err)
-		httpError(w, http.StatusInternalServerError, "internal error")
-		return
-	} else if prior != nil {
-		writeJSON(w, http.StatusOK, s.submissionResponse(prior, true))
-		return
-	}
-
-	result, err := s.extractor.Extract(ctx, llm.Input{
-		Text:           text,
-		Image:          image,
-		ImageMediaType: mediaType,
-		SubmissionDate: now,
+	out, err := s.ingestLead(ctx, leadInput{
+		UserID:    uid,
+		Text:      text,
+		Image:     image,
+		ImageType: mediaType,
+		Now:       now,
+		Source:    store.SourcePaste,
 	})
 	if err != nil {
-		log.Error("extraction failed", "err", err)
-		httpError(w, http.StatusBadGateway, "Extraction failed. Try again")
-		return
-	}
-
-	verdict := extract.Validate(result, s.cfg.Schema, now)
-	resultJSON, _ := json.Marshal(result)
-	flagsJSON, _ := json.Marshal(verdict.Flags)
-
-	sub := &store.Submission{
-		UserID:         uid,
-		ContentHash:    hash,
-		Status:         store.StatusPending,
-		Extraction:     resultJSON,
-		Flags:          flagsJSON,
-		InputExcerpt:   excerpt(text, image),
-		InputText:      text,
-		InputImage:     image,
-		InputImageType: mediaType,
-	}
-	duplicate, err := s.store.Insert(ctx, sub)
-	if err != nil {
-		log.Error("store insert failed", "err", err)
-		httpError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if duplicate {
-		// Lost an insert race with an identical concurrent submission.
-		if prior, err := s.store.FindByHash(ctx, uid, hash); err == nil && prior != nil {
-			writeJSON(w, http.StatusOK, s.submissionResponse(prior, true))
-			return
+		switch {
+		case errors.Is(err, errExtractionFailed):
+			log.Error("extraction failed", "err", err)
+			httpError(w, http.StatusBadGateway, "Extraction failed. Try again")
+		default:
+			log.Error("submission failed", "err", err)
+			httpError(w, http.StatusInternalServerError, "internal error")
 		}
-		httpError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	log.Info("submission extracted",
-		"id", sub.ID,
-		"needs_attention", verdict.NeedsAttention,
-		"confidence", result.Confidence,
-		"multiple_leads", result.MultipleLeadsDetected,
-		"has_image", len(image) > 0,
-	)
-	writeJSON(w, http.StatusOK, s.submissionResponse(sub, false))
+	if !out.Duplicate {
+		log.Info("submission extracted",
+			"id", out.Submission.ID,
+			"needs_attention", out.Verdict.NeedsAttention,
+			"has_image", len(image) > 0,
+		)
+	}
+	writeJSON(w, http.StatusOK, s.submissionResponse(out.Submission, out.Duplicate))
 }
 
 // submissionResponse builds the shared response shape from a stored

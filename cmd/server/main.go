@@ -120,6 +120,11 @@ func main() {
 
 	// Retention: raw originals (full input text, image blobs) are purged
 	// RETENTION_DAYS after a submission settles; extraction results stay.
+	//
+	// Quarantined mail is purged on the same clock. It holds the full text of
+	// messages the user never asked to receive — a larger privacy surface than
+	// anything the paste path creates — so it must not be kept indefinitely
+	// just because nobody got round to dismissing it.
 	purge := func() {
 		cutoff := time.Now().UTC().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 		n, err := st.PurgeInputs(context.Background(), cutoff)
@@ -129,6 +134,14 @@ func main() {
 		}
 		if n > 0 {
 			log.Info("retention purge", "purged", n, "retention_days", cfg.RetentionDays)
+		}
+		m, err := st.PurgeIngestionBodies(context.Background(), cutoff)
+		if err != nil {
+			log.Error("ingestion retention purge", "err", err)
+			return
+		}
+		if m > 0 {
+			log.Info("ingestion retention purge", "purged", m, "retention_days", cfg.RetentionDays)
 		}
 	}
 	purge()
