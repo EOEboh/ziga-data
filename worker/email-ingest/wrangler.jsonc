@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ziga-email-ingest",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  "vars": {
+    // Must match the deployed app. The endpoint is only mounted when
+    // INBOUND_EMAIL_DOMAIN and INGEST_SHARED_SECRET are set server-side.
+    "ZIGA_INGEST_URL": "https://app.zigadata.com/api/ingest/email",
+
+    // Our own ceiling, well under Cloudflare's 25 MiB inbound limit: v1
+    // extracts text only, so a large message is a large attachment we cannot
+    // use. Oversized mail is reported to Ziga as a quarantine event rather
+    // than rejected — see src/index.ts.
+    "MAX_RAW_BYTES": "2097152",
+
+    // A VERIFIED destination address on this Cloudflare account. Receives mail
+    // we could not deliver to Ziga, so an outage delays leads instead of
+    // losing them. forward() throws if the address is not verified, so verify
+    // it before deploying (runbook §k). Empty disables the fallback and
+    // degrades to a loud log.
+    "FALLBACK_ADDRESS": ""
+  }
+
+  // ZIGA_INGEST_SECRET is a secret, not a var:
+  //   wrangler secret put ZIGA_INGEST_SECRET
+  // It must equal INGEST_SHARED_SECRET in /opt/ziga/ziga.env. If the two
+  // drift, every delivery 401s and leads stop arriving with no other symptom.
+}

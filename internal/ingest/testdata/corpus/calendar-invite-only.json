@@ -2,7 +2,7 @@
   "v": 1,
   "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
   "envelope_from": "kemi@partner.example.com",
-  "message_id": "\u003cinvite-4410@calendar.google.com\u003e",
+  "message_id": "<invite-4410@calendar.google.com>",
   "from": {
     "name": "Kemi Alabi",
     "address": "kemi@partner.example.com"
@@ -15,20 +15,31 @@
   "date": "2026-08-19T09:12:00Z",
   "received_at": "2026-08-19T09:12:03Z",
   "headers": {
+    "return-path": [
+      "<kemi@partner.example.com>"
+    ],
+    "delivered-to": [
+      "lead-k3m9x7qp2rt4v8wz@in.zigadata.com"
+    ],
     "content-type": [
-      "text/calendar; method=REQUEST; charset=UTF-8"
+      "multipart/mixed; boundary=\"----=_Part_cal_0\""
     ]
   },
-  "text": "When: Thu Aug 27, 2026 10am",
+  "text": "When: Thu Aug 27, 2026 10am\n\n",
   "html": "",
   "attachments": [
     {
-      "filename": "invite.ics",
+      "filename": "",
       "mime_type": "text/calendar",
-      "size": 1842
+      "size": 0
+    },
+    {
+      "filename": "invite.ics",
+      "mime_type": "application/ics",
+      "size": 0
     }
   ],
-  "raw_size": 512,
+  "raw_size": 1428,
   "truncated": false,
   "worker_event": ""
 }

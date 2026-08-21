@@ -1,0 +1,72 @@
+# worker.yml — CI for the Cloudflare Email Worker that captures inbound leads.
+#
+# Deployed independently of the Go binary: the Worker is outside the go:embed
+# tree, so the two ship on their own cadences (deploy.yml ignores worker/**).
+#
+# The tests here are not optional decoration. test/sign.test.ts pins the same
+# HMAC known-answer vector as internal/ingest/hmac_test.go, and test/parse.test.ts
+# asserts this Worker reproduces the shared fixture corpus in
+# internal/ingest/testdata/corpus. Those are the two places the Worker and the
+# Go side can silently drift apart, and drift means every lead stops arriving
+# with nothing but 401s to show for it.
+name: worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      # The corpus is a cross-language contract, so a fixture change must
+      # re-run the Worker's side of it too.
+      - 'internal/ingest/testdata/corpus/**'
+      - '.github/workflows/worker.yml'
+  pull_request:
+    paths:
+      - 'worker/**'
+      - 'internal/ingest/testdata/corpus/**'
+  workflow_dispatch:
+
+concurrency:
+  group: worker-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: worker/email-ingest
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: worker/email-ingest/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  deploy:
+    needs: verify
+    # Only from main: a PR must not be able to change what routes production
+    # mail.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: worker/email-ingest/package-lock.json
+      - run: npm ci
+      - name: Deploy with wrangler
+        # ZIGA_INGEST_SECRET is NOT set here. It is a wrangler secret, applied
+        # once by hand (`wrangler secret put`), and survives redeploys — see
+        # deploy/RUNBOOK.md §k. Keeping it out of CI keeps it out of the
+        # actions log and out of this repo's secret surface.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy

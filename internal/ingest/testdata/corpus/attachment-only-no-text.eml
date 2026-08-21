@@ -8,6 +8,18 @@ Subject: Scanned document
 Date: Wed, 19 Aug 2026 09:12:00 +0000
 Message-ID: <scan-9090@scanner.example.com>
 MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="----=_Part_scan_0"
+
+------=_Part_scan_0
 Content-Type: text/plain; charset=UTF-8
 
+------=_Part_scan_0
+Content-Type: application/pdf; name="scan_20260819.pdf"
+Content-Disposition: attachment; filename="scan_20260819.pdf"
+Content-Transfer-Encoding: base64
 
+JVBERi0xLjQKJcfsj6IKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRv
+YmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0NvdW50IDAvS2lkc1tdPj4KZW5kb2JqCnRyYWlsZXIK
+PDwvUm9vdCAxIDAgUj4+CiUlRU9GCg==
+
+------=_Part_scan_0--
