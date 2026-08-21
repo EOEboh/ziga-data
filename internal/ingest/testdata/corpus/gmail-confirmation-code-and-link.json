@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "forwarding-noreply@google.com",
+  "message_id": "\u003cforwarding-33821484@google.com\u003e",
+  "from": {
+    "name": "Gmail Team",
+    "address": "forwarding-noreply@google.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Gmail Forwarding Confirmation (#338214849) - Receive Mail from owner@gmail.com",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "owner@gmail.com has requested to automatically forward mail to your email address, lead-k3m9x7qp2rt4v8wz@in.zigadata.com.\n\nConfirmation code: 338214849\n\nTo allow owner@gmail.com to automatically forward mail to your address, please click the link below to confirm the request:\nhttps://mail.google.com/mail/vf-%5BANGjdJ8x2%5D-DhSl3nQ4kZ\n\nIf you do not approve of this request, no further action is required.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 939,
+  "truncated": false,
+  "worker_event": ""
+}

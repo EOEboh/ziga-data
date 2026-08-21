@@ -91,17 +91,60 @@ func (s *Server) handleEmailIngest(w http.ResponseWriter, r *http.Request) {
 	}
 	log := s.log.With("user_id", uid, "message_id", msg.MessageID, "address_id", addr.ID)
 
+	// The filter pipeline runs before anything that costs money. Order within
+	// it is cheapest-first; see ingest.Screen.
+	opt, err := s.screenOptions(ctx, uid)
+	if err != nil {
+		log.Error("ingest: could not load filter options", "err", err)
+		httpError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	outcome := ingest.Screen(msg, opt)
+
+	if outcome.Verification {
+		// Not a lead: the code and link a user needs to finish setting up
+		// forwarding. Recorded so the setup screen can surface it.
+		s.recordVerification(ctx, uid, &msg, outcome)
+		log.Info("ingest: forwarding confirmation captured", "has_code", outcome.Code != "")
+		writeJSON(w, http.StatusAccepted, ingestResponse{Status: ingestVerification})
+		return
+	}
+	if outcome.Quarantine {
+		s.recordEvent(ctx, uid, &msg, store.EventQuarantined, string(outcome.Reason), outcome.Detail, outcome.Text)
+		log.Info("ingest: filtered", "reason", outcome.Reason, "detail", outcome.Detail)
+		writeJSON(w, http.StatusAccepted, ingestResponse{Status: ingestQuarantined})
+		return
+	}
+
+	// Dedup runs before the cap so a mail system's retry never spends budget.
+	if prior, err := s.priorForMessage(ctx, uid, &msg, now); err != nil {
+		log.Error("ingest: dedup lookup failed", "err", err)
+		httpError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if prior != nil {
+		log.Info("ingest: duplicate", "id", prior.ID)
+		writeJSON(w, http.StatusAccepted, ingestResponse{Status: ingestDuplicate, ID: prior.ID})
+		return
+	}
+
 	if over, why := s.overIngestCap(ctx, uid, now); over {
 		// The user, not the worker, is the one who has to act here (their
 		// forwarding rule is probably too broad), so this is a quarantine
 		// rather than a 429 the worker would retry.
-		s.recordEvent(ctx, uid, &msg, store.EventQuarantined, "rate_limited", why, "")
+		s.recordEvent(ctx, uid, &msg, store.EventQuarantined, string(ingest.ReasonRateLimited), why, outcome.Text)
 		log.Warn("ingest: per-user cap reached", "detail", why)
 		writeJSON(w, http.StatusAccepted, ingestResponse{Status: ingestQuarantined})
 		return
 	}
 
-	text := strings.TrimSpace(msg.Text)
+	text, truncated := ingest.Truncate(outcome.Text)
+	var extraFlags []string
+	if truncated {
+		// Surfaced in the review pane's existing flag rendering, so the user
+		// knows the model did not see the whole message.
+		extraFlags = append(extraFlags, "long email truncated for extraction")
+	}
+
 	out, err := s.ingestLead(ctx, leadInput{
 		UserID:      uid,
 		Text:        text,
@@ -111,6 +154,7 @@ func (s *Server) handleEmailIngest(w http.ResponseWriter, r *http.Request) {
 		FromAddress: msg.SenderAddress(),
 		Subject:     msg.Subject,
 		ReceivedAt:  receivedAt(&msg, now),
+		ExtraFlags:  extraFlags,
 		Email: &llm.EmailMeta{
 			From:       msg.SenderAddress(),
 			FromName:   msg.From.Name,
@@ -224,6 +268,67 @@ func (s *Server) recordEvent(ctx context.Context, uid int64, msg *ingest.Message
 		return 0
 	}
 	return ev.ID
+}
+
+// screenOptions loads the per-user inputs the filter pipeline needs. The
+// pipeline itself never touches the store, which is what lets the fixture
+// corpus run without one.
+func (s *Server) screenOptions(ctx context.Context, uid int64) (ingest.Options, error) {
+	blocked, err := s.store.BlockedSenders(ctx, uid)
+	if err != nil {
+		return ingest.Options{}, err
+	}
+	opt := ingest.Options{BlockedSenders: blocked}
+
+	// The user's own addresses are how a message they forwarded themselves is
+	// recognised — without them, a forwarded thread the user started makes the
+	// user their own lead.
+	if u, err := s.store.GetUser(ctx, uid); err == nil && u != nil {
+		opt.OwnAddresses = append(opt.OwnAddresses, strings.ToLower(u.Email))
+	}
+	if addr, err := s.store.ActiveInboundAddress(ctx, uid); err == nil && addr != nil {
+		opt.OwnAddresses = append(opt.OwnAddresses, addr.LocalPart+"@"+s.cfg.InboundEmailDomain)
+	}
+	return opt, nil
+}
+
+// priorForMessage reports an existing submission for this message, checking
+// Message-ID and then the content hash. Both are needed: the hash buckets by
+// calendar day so a redelivery across midnight UTC misses it, and plenty of
+// mail carries no Message-ID at all.
+func (s *Server) priorForMessage(ctx context.Context, uid int64, msg *ingest.Message, now time.Time) (*store.Submission, error) {
+	if msg.MessageID != "" {
+		prior, err := s.store.FindByMessageID(ctx, uid, msg.MessageID, now.Add(-messageIDDedupWindow))
+		if err != nil || prior != nil {
+			return prior, err
+		}
+	}
+	return s.store.FindByHash(ctx, uid, store.ContentHash(uid, strings.TrimSpace(msg.Text), nil, now))
+}
+
+// recordVerification stores a forwarding-confirmation handshake so the setup
+// screen can show the user their code and link.
+func (s *Server) recordVerification(ctx context.Context, uid int64, msg *ingest.Message, outcome ingest.Outcome) {
+	ev := &store.IngestionEvent{
+		UserID:      uid,
+		Status:      store.EventVerification,
+		Reason:      "forwarding_confirmation",
+		Detail:      "confirmation from " + msg.SenderAddress(),
+		MessageID:   msg.MessageID,
+		FromAddress: msg.SenderAddress(),
+		FromName:    msg.From.Name,
+		Subject:     msg.Subject,
+		ReceivedAt:  receivedAt(msg, time.Now().UTC()),
+		BodyExcerpt: excerpt(firstNonEmpty(msg.Text, msg.HTML), nil),
+		VerifyCode:  outcome.Code,
+		VerifyURL:   outcome.URL,
+	}
+	if err := s.store.InsertEvent(ctx, ev); err != nil {
+		// Without this row the user never sees their code and cannot finish
+		// setting up forwarding, so it is worth a loud log.
+		s.log.Error("ingest: could not record forwarding confirmation — the user cannot complete setup",
+			"user_id", uid, "err", err)
+	}
 }
 
 func receivedAt(msg *ingest.Message, fallback time.Time) time.Time {

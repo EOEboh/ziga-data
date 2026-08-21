@@ -1,0 +1,13 @@
+Return-Path: <<>>
+Delivered-To: lead-k3m9x7qp2rt4v8wz@in.zigadata.com
+Received: by mx.cloudflare.net with SMTP id abc123;
+        Wed, 19 Aug 2026 09:12:00 +0000
+From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>
+To: <lead-k3m9x7qp2rt4v8wz@in.zigadata.com>
+Subject: Delivery Status Notification (Failure)
+Date: Wed, 19 Aug 2026 09:12:00 +0000
+Message-ID: <dsn-0001@mx.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Address not found. Your message wasn't delivered to nosuchuser@example.com because the address couldn't be found, or is unable to receive mail.

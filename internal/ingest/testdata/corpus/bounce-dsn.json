@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "\u003c\u003e",
+  "message_id": "\u003cdsn-0001@mx.example.com\u003e",
+  "from": {
+    "name": "Mail Delivery Subsystem",
+    "address": "mailer-daemon@googlemail.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Delivery Status Notification (Failure)",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Address not found. Your message wasn't delivered to nosuchuser@example.com because the address couldn't be found, or is unable to receive mail.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 607,
+  "truncated": false,
+  "worker_event": ""
+}

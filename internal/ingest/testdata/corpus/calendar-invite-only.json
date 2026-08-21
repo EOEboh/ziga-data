@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "kemi@partner.example.com",
+  "message_id": "\u003cinvite-4410@calendar.google.com\u003e",
+  "from": {
+    "name": "Kemi Alabi",
+    "address": "kemi@partner.example.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Invitation: Project kickoff @ Thu Aug 27, 2026",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {
+    "content-type": [
+      "text/calendar; method=REQUEST; charset=UTF-8"
+    ]
+  },
+  "text": "When: Thu Aug 27, 2026 10am",
+  "html": "",
+  "attachments": [
+    {
+      "filename": "invite.ics",
+      "mime_type": "text/calendar",
+      "size": 1842
+    }
+  ],
+  "raw_size": 512,
+  "truncated": false,
+  "worker_event": ""
+}

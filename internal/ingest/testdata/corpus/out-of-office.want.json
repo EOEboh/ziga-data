@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "machine_mail",
+  "detail": "subject looks like an auto-reply or delivery report"
+}

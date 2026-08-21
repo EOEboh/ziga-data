@@ -158,6 +158,16 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 		mux.Handle("GET /api/inbound", protected(s.handleInbound))
 		mux.Handle("POST /api/inbound/enable", protected(s.handleInboundEnable))
 		mux.Handle("POST /api/inbound/rotate", protected(s.handleInboundRotate))
+
+		// Quarantine: filtered mail, and the rescue that makes "never
+		// silently lost" checkable rather than merely claimed.
+		mux.Handle("GET /api/quarantine", protected(s.handleQuarantine))
+		mux.Handle("POST /api/quarantine/{id}/rescue", s.rateLimit(protected(s.handleQuarantineRescue)))
+		mux.Handle("POST /api/quarantine/{id}/dismiss", protected(s.handleQuarantineDismiss))
+		mux.Handle("GET /api/senders/blocked", protected(s.handleBlockedSenders))
+		mux.Handle("POST /api/senders/block", protected(s.handleBlockSender))
+		mux.Handle("POST /api/senders/unblock", protected(s.handleUnblockSender))
+		mux.Handle("POST /api/queue/seen", protected(s.handleQueueSeen))
 	}
 
 	// Submission app (protected + user-scoped).

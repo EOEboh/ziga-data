@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "owner@gmail.com",
+  "message_id": "\u003cCAJ1z4@mail.gmail.com\u003e",
+  "from": {
+    "name": "Sam Owner",
+    "address": "owner@gmail.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Fwd: Need a logo for my agency",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Passing this on.\n\n---------- Forwarded message ---------\nFrom: Ngozi Umeh \u003cngozi@umeh-legal.com\u003e\nDate: Tue, 18 Aug 2026 at 14:02\nSubject: Need a logo for my agency\nTo: \u003csam@owner-agency.com\u003e\n\n\nHello,\n\nI'm starting a legal consultancy and need a logo plus letterhead. Hoping to launch in six weeks. My number is 0701 555 0142.\n\nNgozi Umeh",
+  "html": "",
+  "attachments": [],
+  "raw_size": 790,
+  "truncated": false,
+  "worker_event": ""
+}

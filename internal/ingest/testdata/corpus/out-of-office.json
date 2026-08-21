@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "yemi@partnerfirm.example.com",
+  "message_id": "\u003cooo-2211@corp.example.com\u003e",
+  "from": {
+    "name": "Yemi Bakare",
+    "address": "yemi@partnerfirm.example.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Out of Office: your enquiry",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Thank you for your email. I am on annual leave until 30 August with limited access to email and will respond on my return.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 591,
+  "truncated": false,
+  "worker_event": ""
+}

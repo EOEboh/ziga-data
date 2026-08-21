@@ -1,0 +1,17 @@
+Return-Path: <security@gmai1-support.example.com>
+Delivered-To: lead-k3m9x7qp2rt4v8wz@in.zigadata.com
+Received: by mx.cloudflare.net with SMTP id abc123;
+        Wed, 19 Aug 2026 09:12:00 +0000
+From: Gmail Team <security@gmai1-support.example.com>
+To: <lead-k3m9x7qp2rt4v8wz@in.zigadata.com>
+Subject: Gmail Forwarding Confirmation (#999999999) - Receive Mail from victim@gmail.com
+Date: Wed, 19 Aug 2026 09:12:00 +0000
+Message-ID: <phish-1@attacker.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Confirmation code: 999999999
+
+Click here to confirm: https://mail.google.com.attacker.example.com/vf-fake
+
+You must confirm within 24 hours or forwarding will be disabled.

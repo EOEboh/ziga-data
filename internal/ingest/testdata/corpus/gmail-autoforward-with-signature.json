@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "f.adeyemi@clinicplus.ng",
+  "message_id": "\u003cCAH9y3@mail.gmail.com\u003e",
+  "from": {
+    "name": "Dr. Femi Adeyemi",
+    "address": "f.adeyemi@clinicplus.ng"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Clinic booking system",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {
+    "x-forwarded-for": [
+      "owner@gmail.com lead-k3m9x7qp2rt4v8wz@in.zigadata.com"
+    ]
+  },
+  "text": "Good afternoon,\n\nWe would like a booking system for our clinic so patients can reserve slots online.\n\n--\nDr. Femi Adeyemi\nMedical Director | ClinicPlus\nMobile: +234 809 555 0176\nclinicplus.ng",
+  "html": "",
+  "attachments": [],
+  "raw_size": 725,
+  "truncated": false,
+  "worker_event": ""
+}

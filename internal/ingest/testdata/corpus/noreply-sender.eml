@@ -1,0 +1,13 @@
+Return-Path: <noreply@shopify.com>
+Delivered-To: lead-k3m9x7qp2rt4v8wz@in.zigadata.com
+Received: by mx.cloudflare.net with SMTP id abc123;
+        Wed, 19 Aug 2026 09:12:00 +0000
+From: Shopify <noreply@shopify.com>
+To: <lead-k3m9x7qp2rt4v8wz@in.zigadata.com>
+Subject: Your store report is ready
+Date: Wed, 19 Aug 2026 09:12:00 +0000
+Message-ID: <notify-5512@shopify.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Your weekly store report is now available. Log in to view your sales, sessions and conversion rate.

@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "owner@gmail.com",
+  "message_id": "\u003cOUTLOOK-100@corp.example.com\u003e",
+  "from": {
+    "name": "Sam Owner",
+    "address": "owner@gmail.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "FW: Shopfront signage",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "-----Original Message-----\nFrom: Grace Ademola \u003cgrace@ademola-stores.com\u003e\nSent: Sunday, August 16, 2026 9:00 AM\nSubject: Shopfront signage\n\n\u003e Hello,\n\u003e\n\u003e We are opening a second shop in Ikeja and need signage for the shopfront,\n\u003e plus vinyl for the windows. What is your lead time?\n\u003e\n\u003e Grace Ademola\n\u003e 0814 555 0177",
+  "html": "",
+  "attachments": [],
+  "raw_size": 763,
+  "truncated": false,
+  "worker_event": ""
+}

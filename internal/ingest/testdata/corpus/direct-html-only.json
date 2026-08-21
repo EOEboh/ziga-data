@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "tunde.bello@brightpath.ng",
+  "message_id": "\u003cform-9931@websiteforms.io\u003e",
+  "from": {
+    "name": "Tunde Bello",
+    "address": "tunde.bello@brightpath.ng"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Website enquiry",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "",
+  "html": "\u003chtml\u003e\u003chead\u003e\u003cstyle\u003e.wrap{color:#333}\u003c/style\u003e\u003ctitle\u003eEnquiry\u003c/title\u003e\u003c/head\u003e\u003cbody\u003e\u003cdiv class=\"wrap\"\u003e\u003cp\u003eHello,\u003c/p\u003e\u003cp\u003eI run a small bakery in Lagos and I need an online store where customers can order cakes.\u003c/p\u003e\u003cp\u003eReach me on \u003ca href=\"https://track.example.com/r?u=mailto%3Atunde%40brightpath.ng\"\u003etunde.bello@brightpath.ng\u003c/a\u003e or 0803 555 0199.\u003c/p\u003e\u003cimg src=\"https://track.example.com/pixel.gif\" width=\"1\" height=\"1\"\u003e\u003cp\u003e\u003ca href=\"https://track.example.com/unsub\"\u003eUnsubscribe\u003c/a\u003e\u003c/p\u003e\u003c/div\u003e\u003cscript\u003econsole.log(\"tracking\")\u003c/script\u003e\u003c/body\u003e\u003c/html\u003e",
+  "attachments": [],
+  "raw_size": 985,
+  "truncated": false,
+  "worker_event": ""
+}

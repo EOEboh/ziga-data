@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "security@gmai1-support.example.com",
+  "message_id": "\u003cphish-1@attacker.example.com\u003e",
+  "from": {
+    "name": "Gmail Team",
+    "address": "security@gmai1-support.example.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Gmail Forwarding Confirmation (#999999999) - Receive Mail from victim@gmail.com",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Confirmation code: 999999999\n\nClick here to confirm: https://mail.google.com.attacker.example.com/vf-fake\n\nYou must confirm within 24 hours or forwarding will be disabled.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 710,
+  "truncated": false,
+  "worker_event": ""
+}

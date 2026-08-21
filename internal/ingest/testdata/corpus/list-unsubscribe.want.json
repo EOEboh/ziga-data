@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "machine_mail",
+  "detail": "list-unsubscribe header present (newsletter or mailing list)"
+}
