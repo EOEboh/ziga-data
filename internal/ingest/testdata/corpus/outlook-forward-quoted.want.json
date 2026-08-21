@@ -1,5 +1,16 @@
 {
   "decision": "accept",
   "text_prefix": "-----Original Message----- From: Grace Ademola \u003cgrace@ademola-stores.com\u003e Sent: ",
-  "text_runes": 314
+  "text_runes": 314,
+  "origin": {
+    "sender": "grace@ademola-stores.com",
+    "subject": "Shopfront signage",
+    "forwarded": true,
+    "method": "body:outlook",
+    "confidence": "high",
+    "chose": "only",
+    "thread_count": 1,
+    "text_prefix": "Hello, We are opening a second shop in Ikeja and need signage for the ",
+    "signature_kept": true
+  }
 }

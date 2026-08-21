@@ -5,6 +5,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -26,6 +28,27 @@ type want struct {
 	TextRunes  int    `json:"text_runes,omitempty"`
 	Code       string `json:"code,omitempty"`
 	URL        string `json:"url,omitempty"`
+
+	// Origin is set on accepted messages: who the lead was decided to be and
+	// how. This is the half of the corpus that guards against extracting the
+	// wrong party, which is a silent failure — the row looks fine.
+	Origin *originWant `json:"origin,omitempty"`
+}
+
+type originWant struct {
+	Sender      string `json:"sender"`
+	Subject     string `json:"subject"`
+	Forwarded   bool   `json:"forwarded"`
+	Method      string `json:"method"`
+	Confidence  string `json:"confidence"`
+	Chose       string `json:"chose,omitempty"`
+	ThreadCount int    `json:"thread_count,omitempty"`
+	// TextPrefix pins the start of the cleaned body the model would see.
+	TextPrefix string `json:"text_prefix,omitempty"`
+	// SignatureKept asserts a detail that only appears in a signature block
+	// survived cleaning — signatures are frequently the only place a lead's
+	// phone number appears.
+	SignatureKept bool `json:"signature_kept,omitempty"`
 }
 
 func decisionOf(o Outcome) string {
@@ -52,6 +75,24 @@ func toWant(o Outcome) want {
 		w.TextPrefix = prefixRunes(o.Text, 80)
 	}
 	return w
+}
+
+// phoneInSignature is a detail that appears only in a signature block in the
+// fixtures that carry one. Clean must not remove it.
+var phoneInSignature = regexp.MustCompile(`\+?\d[\d\s()-]{8,}`)
+
+func toOriginWant(og Origin) *originWant {
+	return &originWant{
+		Sender:        strings.ToLower(og.Sender.Address),
+		Subject:       og.Subject,
+		Forwarded:     og.Forwarded,
+		Method:        og.Provenance.Method,
+		Confidence:    og.Provenance.Confidence,
+		Chose:         og.Provenance.Chose,
+		ThreadCount:   og.Provenance.ThreadCount,
+		TextPrefix:    prefixRunes(og.Text, 70),
+		SignatureKept: phoneInSignature.MatchString(og.Text),
+	}
 }
 
 func prefixRunes(s string, n int) string {
@@ -94,7 +135,16 @@ func TestCorpus(t *testing.T) {
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			m := loadMessage(t, name)
-			got := toWant(Screen(m, corpusOptions(name)))
+			opt := corpusOptions(name)
+			outcome := Screen(m, opt)
+			got := toWant(outcome)
+			// Origin resolution only runs on messages that survive screening —
+			// that is the whole ordering guarantee.
+			if outcome.Accept {
+				resolved := m
+				resolved.Text = outcome.Text
+				got.Origin = toOriginWant(ResolveOrigin(resolved, opt))
+			}
 
 			goldenPath := filepath.Join(corpusDir, name+".want.json")
 			if *update {
@@ -110,7 +160,7 @@ func TestCorpus(t *testing.T) {
 			if err := json.Unmarshal(raw, &expected); err != nil {
 				t.Fatalf("decode golden: %v", err)
 			}
-			if got != expected {
+			if !reflect.DeepEqual(got, expected) {
 				gotJSON, _ := json.MarshalIndent(got, "", "  ")
 				wantJSON, _ := json.MarshalIndent(expected, "", "  ")
 				t.Errorf("outcome changed.\n got: %s\nwant: %s", gotJSON, wantJSON)

@@ -1,5 +1,14 @@
 {
   "decision": "accept",
   "text_prefix": "Hi, I'm organising a conference in October for about 400 people and need full ev",
-  "text_runes": 168
+  "text_runes": 168,
+  "origin": {
+    "sender": "chiamaka@eze-events.com",
+    "subject": "Event branding — quick question",
+    "forwarded": true,
+    "method": "header:auto-forward",
+    "confidence": "high",
+    "chose": "sole-header",
+    "text_prefix": "Hi, I'm organising a conference in October for about 400 people and ne"
+  }
 }

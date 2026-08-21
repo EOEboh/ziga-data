@@ -1,5 +1,15 @@
 {
   "decision": "accept",
   "text_prefix": "Hi there, We're launching a new product in March and need a landing page built. ",
-  "text_runes": 174
+  "text_runes": 174,
+  "origin": {
+    "sender": "ada@lumen.studio",
+    "subject": "Landing page for our March launch",
+    "forwarded": false,
+    "method": "direct",
+    "confidence": "high",
+    "chose": "only",
+    "text_prefix": "Hi there, We're launching a new product in March and need a landing pa",
+    "signature_kept": true
+  }
 }

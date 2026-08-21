@@ -156,7 +156,7 @@ func main() {
 		extract.SystemPrompt(cfg.Schema),
 		extract.JSONSchema(cfg.Schema),
 		func(text string, in llm.Input) string {
-			return extract.UserText(text, in.SubmissionDate)
+			return extract.UserText(text, in.SubmissionDate, in.Email)
 		},
 	)
 

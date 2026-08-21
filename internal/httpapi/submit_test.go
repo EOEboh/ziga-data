@@ -32,10 +32,15 @@ type fakeExtractor struct {
 	result *llm.Result
 	err    error
 	calls  int
+	// last records what the extractor was actually handed, so tests can assert
+	// on the envelope context the model receives — the difference between a
+	// forwarded lead being attributed correctly or not.
+	last llm.Input
 }
 
-func (f *fakeExtractor) Extract(_ context.Context, _ llm.Input) (*llm.Result, error) {
+func (f *fakeExtractor) Extract(_ context.Context, in llm.Input) (*llm.Result, error) {
 	f.calls++
+	f.last = in
 	if f.err != nil {
 		return nil, f.err
 	}

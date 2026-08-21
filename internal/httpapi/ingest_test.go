@@ -450,3 +450,142 @@ func TestIngestExtractionFailureAsksForRetry(t *testing.T) {
 		t.Fatalf("status = %d, want 5xx so the worker retries a transient model failure", rec.Code)
 	}
 }
+
+// TestIngestAttributesForwardedLeadToTheOriginalSender is the end-to-end
+// version of the auto-forward rule.
+//
+// Gmail auto-forwarding preserves the original From: and adds X-Forwarded-*
+// headers containing the USER's own addresses. If the pipeline read the
+// identity out of those headers instead of trusting From:, every
+// auto-forwarded lead would be filed under the user's own mailbox — and the
+// rows would look completely normal, so nobody would notice.
+func TestIngestAttributesForwardedLeadToTheOriginalSender(t *testing.T) {
+	s, _ := ingestServer(t)
+	_ = handler(s)
+	uid := testUID(t, s)
+	addr := enableInbound(t, s, uid)
+
+	msg := mailTo(addr)
+	msg.From = ingest.Identity{Name: "Chiamaka Eze", Address: "chiamaka@eze-events.com"}
+	msg.EnvelopeFrom = "chiamaka@eze-events.com"
+	msg.MessageID = "<fwd-1@mail.gmail.com>"
+	msg.Subject = "Event branding"
+	msg.Headers = map[string][]string{
+		"x-forwarded-for": {testUserEmail + " " + addr},
+		"x-forwarded-to":  {addr},
+	}
+	msg.Text = "I'm organising a conference in October for 400 people and need full event branding."
+
+	rec, out := postIngest(t, rawHandler(s), msg)
+	if rec.Code != http.StatusAccepted || out.Status != ingestAccepted {
+		t.Fatalf("ingest: %d %+v", rec.Code, out)
+	}
+	sub, err := s.store.Get(context.Background(), uid, out.ID)
+	if err != nil || sub == nil {
+		t.Fatal(err)
+	}
+	if sub.FromAddress != "chiamaka@eze-events.com" {
+		t.Fatalf("lead recorded as %q, want the original sender", sub.FromAddress)
+	}
+	if sub.FromAddress == testUserEmail {
+		t.Fatal("the lead was attributed to the account owner — the auto-forward rule is inverted")
+	}
+}
+
+// TestIngestManualForwardReadsTheInnerSender: a user pressing Forward makes
+// themselves the envelope sender, and the real lead is inside the body.
+func TestIngestManualForwardReadsTheInnerSender(t *testing.T) {
+	s, _ := ingestServer(t)
+	_ = handler(s)
+	uid := testUID(t, s)
+	addr := enableInbound(t, s, uid)
+
+	msg := mailTo(addr)
+	msg.From = ingest.Identity{Name: "Sam Owner", Address: testUserEmail}
+	msg.EnvelopeFrom = testUserEmail
+	msg.MessageID = "<manual-1@mail.gmail.com>"
+	msg.Subject = "Fwd: Need a logo for my agency"
+	msg.Headers = map[string][]string{}
+	msg.Text = "Passing this on.\n\n---------- Forwarded message ---------\n" +
+		"From: Ngozi Umeh <ngozi@umeh-legal.com>\n" +
+		"Date: Tue, 18 Aug 2026 at 14:02\n" +
+		"Subject: Need a logo for my agency\n\n" +
+		"I'm starting a legal consultancy and need a logo plus letterhead."
+
+	rec, out := postIngest(t, rawHandler(s), msg)
+	if rec.Code != http.StatusAccepted || out.Status != ingestAccepted {
+		t.Fatalf("ingest: %d %+v", rec.Code, out)
+	}
+	sub, err := s.store.Get(context.Background(), uid, out.ID)
+	if err != nil || sub == nil {
+		t.Fatal(err)
+	}
+	if sub.FromAddress != "ngozi@umeh-legal.com" {
+		t.Fatalf("lead recorded as %q, want the person inside the forward", sub.FromAddress)
+	}
+	// The subject should read as the original enquiry, not "Fwd: ...".
+	if strings.HasPrefix(strings.ToLower(sub.Subject), "fwd:") {
+		t.Errorf("subject = %q, want the forward prefix stripped", sub.Subject)
+	}
+	// The model must be told this was forwarded and by whom, or it has no way
+	// to know the lead is the person inside rather than the sender.
+	meta := s.extractor.(*fakeExtractor).last.Email
+	if meta == nil {
+		t.Fatal("no email metadata reached the extractor")
+	}
+	if !meta.Forwarded {
+		t.Error("the extraction prompt was not told the message was forwarded")
+	}
+	if meta.From != "ngozi@umeh-legal.com" {
+		t.Errorf("prompt metadata names %q as the lead, want the forwarded sender", meta.From)
+	}
+	if meta.ForwardedBy != testUserEmail {
+		t.Errorf("forwarded_by = %q, want the account owner recorded as the forwarder", meta.ForwardedBy)
+	}
+	// The forwarder's own preamble must not be what the model reads.
+	if strings.Contains(s.extractor.(*fakeExtractor).last.Text, "Passing this on") {
+		t.Error("the forwarder's preamble was sent to the model as the lead body")
+	}
+}
+
+// TestLowConfidenceAttributionRaisesAFlag: attributing a lead to the wrong
+// person is a silent failure. When the choice involved a guess, the review
+// pane must say so rather than presenting it as settled.
+func TestLowConfidenceAttributionRaisesAFlag(t *testing.T) {
+	s, _ := ingestServer(t)
+	_ = handler(s)
+	uid := testUID(t, s)
+	addr := enableInbound(t, s, uid)
+
+	// A localised forward we do not parse, sent by the account owner.
+	msg := mailTo(addr)
+	msg.From = ingest.Identity{Name: "Sam Owner", Address: testUserEmail}
+	msg.EnvelopeFrom = testUserEmail
+	msg.MessageID = "<localised-1@mail.example.de>"
+	msg.Subject = "WG: Anfrage"
+	msg.Headers = map[string][]string{}
+	msg.Text = "-----Ursprüngliche Nachricht-----\n" +
+		"Von: Klaus Weber <klaus@weber-bau.de>\n" +
+		"Gesendet: Montag, 17. August 2026 14:14\n\n" +
+		"Wir brauchen eine neue Website für unser Bauunternehmen."
+
+	_, out := postIngest(t, rawHandler(s), msg)
+	if out.Status != ingestAccepted {
+		t.Fatalf("an unparsed forward must still be captured, got %+v", out)
+	}
+	sub, err := s.store.Get(context.Background(), uid, out.ID)
+	if err != nil || sub == nil {
+		t.Fatal(err)
+	}
+	var flags []string
+	json.Unmarshal(sub.Flags, &flags)
+	found := false
+	for _, f := range flags {
+		if strings.Contains(f, "confidence") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("flags = %v, want one warning the user to check who the lead is from", flags)
+	}
+}

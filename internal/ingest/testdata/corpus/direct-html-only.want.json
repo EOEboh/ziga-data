@@ -1,5 +1,15 @@
 {
   "decision": "accept",
   "text_prefix": "Hello, I run a small bakery in Lagos and I need an online store where customers ",
-  "text_runes": 165
+  "text_runes": 165,
+  "origin": {
+    "sender": "tunde.bello@brightpath.ng",
+    "subject": "Website enquiry",
+    "forwarded": false,
+    "method": "direct",
+    "confidence": "high",
+    "chose": "only",
+    "text_prefix": "Hello, I run a small bakery in Lagos and I need an online store where ",
+    "signature_kept": true
+  }
 }

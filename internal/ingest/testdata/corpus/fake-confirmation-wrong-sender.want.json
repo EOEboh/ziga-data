@@ -1,5 +1,15 @@
 {
   "decision": "accept",
   "text_prefix": "Confirmation code: 999999999 Click here to confirm: https://mail.google.com.atta",
-  "text_runes": 171
+  "text_runes": 171,
+  "origin": {
+    "sender": "security@gmai1-support.example.com",
+    "subject": "Gmail Forwarding Confirmation (#999999999) - Receive Mail from victim@gmail.com",
+    "forwarded": false,
+    "method": "direct",
+    "confidence": "high",
+    "chose": "only",
+    "text_prefix": "Confirmation code: 999999999 Click here to confirm: https://mail.googl",
+    "signature_kept": true
+  }
 }

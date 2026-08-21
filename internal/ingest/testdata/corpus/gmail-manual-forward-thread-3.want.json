@@ -1,5 +1,16 @@
 {
   "decision": "accept",
   "text_prefix": "See below. ---------- Forwarded message --------- From: Bisi Adeleke \u003cbisi@adele",
-  "text_runes": 845
+  "text_runes": 845,
+  "origin": {
+    "sender": "bisi@adeleke-catering.com",
+    "subject": "Catering for staff retreat",
+    "forwarded": true,
+    "method": "body:gmail",
+    "confidence": "high",
+    "chose": "earliest",
+    "thread_count": 3,
+    "text_prefix": "Hi Kunle, I'd like to book catering for our staff retreat on 12 Septem",
+    "signature_kept": true
+  }
 }

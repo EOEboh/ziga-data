@@ -137,12 +137,33 @@ func (s *Server) handleEmailIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, truncated := ingest.Truncate(outcome.Text)
+	// Who is the lead? Almost never the envelope sender once forwarding is
+	// involved — see ingest.ResolveOrigin.
+	screened := msg
+	screened.Text = outcome.Text
+	origin := ingest.ResolveOrigin(screened, opt)
+
+	// Truncation happens after forwarded parsing: a long quoted thread often
+	// reduces to one short message, and truncating first would cut the lead
+	// out of a message that then fits comfortably.
+	text, truncated := ingest.Truncate(origin.Text)
 	var extraFlags []string
 	if truncated {
-		// Surfaced in the review pane's existing flag rendering, so the user
-		// knows the model did not see the whole message.
+		// Surfaced through the review pane's existing flag rendering, so the
+		// user knows the model did not see the whole message.
 		extraFlags = append(extraFlags, "long email truncated for extraction")
+	}
+	if origin.Provenance.Confidence != "high" {
+		// Attributing a lead to the wrong person is a silent failure — the row
+		// looks entirely normal. When the choice involved a guess, say so, so
+		// the user checks the sender rather than trusting it.
+		extraFlags = append(extraFlags, "forwarded email — sender identified with "+
+			origin.Provenance.Confidence+" confidence, check who this is from")
+	}
+
+	forwardedBy := ""
+	if origin.Forwarded && origin.Sender.Address != msg.SenderAddress() {
+		forwardedBy = msg.SenderAddress()
 	}
 
 	out, err := s.ingestLead(ctx, leadInput{
@@ -151,15 +172,17 @@ func (s *Server) handleEmailIngest(w http.ResponseWriter, r *http.Request) {
 		Now:         now,
 		Source:      store.SourceEmail,
 		MessageID:   msg.MessageID,
-		FromAddress: msg.SenderAddress(),
-		Subject:     msg.Subject,
+		FromAddress: strings.ToLower(origin.Sender.Address),
+		Subject:     origin.Subject,
 		ReceivedAt:  receivedAt(&msg, now),
 		ExtraFlags:  extraFlags,
 		Email: &llm.EmailMeta{
-			From:       msg.SenderAddress(),
-			FromName:   msg.From.Name,
-			Subject:    msg.Subject,
-			ReceivedAt: receivedAt(&msg, now),
+			From:        strings.ToLower(origin.Sender.Address),
+			FromName:    origin.Sender.Name,
+			Subject:     origin.Subject,
+			ForwardedBy: forwardedBy,
+			Forwarded:   origin.Forwarded,
+			ReceivedAt:  receivedAt(&msg, now),
 		},
 	})
 	if err != nil {
@@ -181,9 +204,16 @@ func (s *Server) handleEmailIngest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, ingestResponse{Status: ingestDuplicate, ID: out.Submission.ID})
 		return
 	}
+	// Provenance goes to the log rather than the row: when a user reports that
+	// a lead names the wrong person, this says which rule chose them and who
+	// else was on the table. Without it the complaint is unfalsifiable.
+	prov, _ := json.Marshal(origin.Provenance)
 	log.Info("ingest: lead captured",
 		"id", out.Submission.ID,
-		"from", msg.SenderAddress(),
+		"envelope_from", msg.SenderAddress(),
+		"lead_from", origin.Sender.Address,
+		"forwarded", origin.Forwarded,
+		"provenance", string(prov),
 		"needs_attention", out.Verdict.NeedsAttention,
 	)
 	writeJSON(w, http.StatusAccepted, ingestResponse{Status: ingestAccepted, ID: out.Submission.ID})

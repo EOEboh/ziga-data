@@ -1,5 +1,16 @@
 {
   "decision": "accept",
   "text_prefix": "Passing this on. ---------- Forwarded message --------- From: Ngozi Umeh \u003cngozi@",
-  "text_runes": 337
+  "text_runes": 337,
+  "origin": {
+    "sender": "ngozi@umeh-legal.com",
+    "subject": "Need a logo for my agency",
+    "forwarded": true,
+    "method": "body:gmail",
+    "confidence": "high",
+    "chose": "only",
+    "thread_count": 1,
+    "text_prefix": "Hello, I'm starting a legal consultancy and need a logo plus letterhea",
+    "signature_kept": true
+  }
 }
