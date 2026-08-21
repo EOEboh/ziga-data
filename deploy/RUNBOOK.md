@@ -692,20 +692,48 @@ revert: the marketing domain's mail is now going somewhere else.
    would turn the safety net into a second failure. `wrangler.jsonc`'s
    `FALLBACK_ADDRESS` must be exactly this verified address.
 
-### k.3 Cloudflare API token
+### k.3 Two Cloudflare API tokens — not one
 
-**My Profile → API Tokens → Create Token → Custom token**:
+They are easy to conflate and the failure is confusing, so create both
+deliberately. **My Profile → API Tokens → Create Token → Custom token**.
+
+**Token A — the app's, for routing rules.** Lives in `/opt/ziga/ziga.env` as
+`CLOUDFLARE_API_TOKEN`. Ziga uses it to create one routing rule per capture
+address.
 
 - Permissions: `Zone` → `Email Routing Rules` → `Edit`
 - Zone Resources: Include → Specific zone → `zigadata.com`
 
-Nothing broader. This token can create and delete mail routing rules on the
-zone, and that is all it should be able to do.
+**Token B — CI's, for publishing the Worker.** Lives as the GitHub repository
+secret `CLOUDFLARE_WORKERS_TOKEN`, and is what you export locally when running
+`wrangler deploy` by hand.
+
+- Permissions: `Account` → `Workers Scripts` → `Edit`
+- Account Resources: Include → your account
+
+Neither token can do the other's job. Token A cannot publish a Worker; Token B
+cannot create a routing rule. Giving CI the routing token produces an
+authentication error at `wrangler deploy` that reads like a bad token rather
+than a wrong scope, which is the trap this section exists to prevent.
+
+Also add `CLOUDFLARE_ACCOUNT_ID` as a repository secret (Cloudflare dashboard →
+Workers & Pages → account id in the right sidebar). Wrangler can usually infer
+it from a single-account token, but setting it removes the ambiguity.
+
+Until `CLOUDFLARE_WORKERS_TOKEN` is set, the deploy job in
+`.github/workflows/worker.yml` **skips rather than fails**, so merging this
+without any of it configured does not turn `main` red.
 
 ### k.4 Deploy the Worker
 
+First set `FALLBACK_ADDRESS` in `worker/email-ingest/wrangler.jsonc` to the
+verified destination address from §k.2 and commit it — it ships empty, which
+degrades to a loud log instead of preserving mail. Check `ZIGA_INGEST_URL`
+matches the deployed app while you are in there.
+
 ```sh
 cd worker/email-ingest
+export CLOUDFLARE_API_TOKEN=<Token B from k.3>
 npm ci
 npm test                      # includes the cross-language corpus + HMAC vector
 npx wrangler deploy

@@ -63,10 +63,26 @@ jobs:
           cache-dependency-path: worker/email-ingest/package-lock.json
       - run: npm ci
       - name: Deploy with wrangler
-        # ZIGA_INGEST_SECRET is NOT set here. It is a wrangler secret, applied
-        # once by hand (`wrangler secret put`), and survives redeploys — see
-        # deploy/RUNBOOK.md §k. Keeping it out of CI keeps it out of the
-        # actions log and out of this repo's secret surface.
+        # Skipped, not failed, when the token is absent. Email ingestion is
+        # optional: a repo that has not set this up must not get a red main
+        # for a feature it is not running.
+        #
+        # NOTE the token here is NOT the one in ziga.env. This one needs
+        # Workers Scripts -> Edit to publish the Worker. The app's
+        # CLOUDFLARE_API_TOKEN needs Email Routing Rules -> Edit to create
+        # per-address rules. Two different scopes, two different homes; see
+        # deploy/RUNBOOK.md §k.3.
+        #
+        # ZIGA_INGEST_SECRET is deliberately not set here either. It is a
+        # wrangler secret applied once by hand and survives redeploys, which
+        # keeps it out of the actions log and out of this repo's secrets.
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npx wrangler deploy
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_WORKERS_TOKEN is not set — skipping the Worker deploy."
+            echo "Email ingestion is optional; see deploy/RUNBOOK.md §k to enable it."
+            exit 0
+          fi
+          npx wrangler deploy
