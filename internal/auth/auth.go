@@ -86,8 +86,14 @@ func EqualToken(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-func sign(secret []byte, msg string) string {
+// SignHMAC returns the base64url (unpadded) HMAC-SHA256 of msg under secret.
+// It keys CSRF tokens here and authenticates the email ingestion webhook in
+// internal/ingest; both use this one definition so there is a single piece of
+// signing code in the binary to review.
+func SignHMAC(secret []byte, msg string) string {
 	m := hmac.New(sha256.New, secret)
 	m.Write([]byte(msg))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
+
+func sign(secret []byte, msg string) string { return SignHMAC(secret, msg) }

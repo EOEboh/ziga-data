@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/EOEboh/ziga-data/internal/cfroute"
 	"github.com/EOEboh/ziga-data/internal/config"
 	"github.com/EOEboh/ziga-data/internal/destination"
 	"github.com/EOEboh/ziga-data/internal/llm"
@@ -51,6 +52,14 @@ type Server struct {
 	// API limiter above.
 	loginLimiter *ipLimiter
 	resetLimiter *ipLimiter
+	// ingestLimiter budgets email ingestion. It uses the same type but is
+	// never keyed by IP: ingestion traffic all originates from the mail
+	// provider's egress, so a per-IP budget would be one bucket shared by
+	// every tenant. Keys are "addr:<recipient>" and "user:<id>".
+	ingestLimiter *ipLimiter
+	// cfRoutes provisions a routing rule per capture address; nil when email
+	// ingestion is not configured.
+	cfRoutes routeProvisioner
 	// confirmMu serializes confirms; concurrent confirms of the same
 	// submission would otherwise append duplicate sheet rows.
 	confirmMu sync.Mutex
@@ -63,12 +72,21 @@ type Server struct {
 }
 
 func New(cfg *config.Config, log *slog.Logger, ex llm.Extractor, st *store.Store, w destination.Writer, m mail.Mailer, oc *oauth.Config, nc *notionauth.Config, box *secretbox.Box) *Server {
+	var routes routeProvisioner
+	if cfg.EmailIngestConfigured() {
+		routes = cfroute.New(cfg.CloudflareAPIToken, cfg.CloudflareZoneID, cfg.IngestWorkerName)
+	}
 	return &Server{
+		cfRoutes: routes,
 		cfg: cfg, log: log, extractor: ex, store: st, writer: w, mailer: m,
 		oauth: oc, notionAuth: nc, box: box,
-		limiter:       newIPLimiter(cfg.RatePerMin),
-		loginLimiter:  newIPLimiterBurst(20, 5),
-		resetLimiter:  newIPLimiterBurst(6, 3),
+		limiter:      newIPLimiter(cfg.RatePerMin),
+		loginLimiter: newIPLimiterBurst(20, 5),
+		resetLimiter: newIPLimiterBurst(6, 3),
+		// The burst allows a short delivery spike (a forwarding rule catching
+		// up after an outage); the persistent daily count in overIngestCap is
+		// what actually bounds the bill.
+		ingestLimiter: newIPLimiterBurst(cfg.IngestBurst*6, cfg.IngestBurst),
 		sessionSecret: []byte(cfg.SessionSecret),
 		secureCookies: strings.HasPrefix(cfg.AppBaseURL, "https://"),
 		baseURL:       strings.TrimRight(cfg.AppBaseURL, "/"),
@@ -82,6 +100,20 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+
+	// Email ingestion, registered bare: no csrf, no requireAuth. The caller is
+	// the mail worker, not a browser, so there is no session to require and no
+	// cookie for a CSRF token to defend — it authenticates with an HMAC over
+	// the request body instead. Its rate limit lives inside the handler
+	// because it is keyed by inbound address, not by IP (all ingestion
+	// traffic shares one upstream IP).
+	//
+	// Registered only when ingestion is configured, so a server without the
+	// shared secret 404s rather than exposing an endpoint nothing can
+	// authenticate to.
+	if s.cfg.EmailIngestConfigured() {
+		mux.HandleFunc("POST /api/ingest/email", s.handleEmailIngest)
+	}
 
 	// public routes carry CSRF (so unsafe methods are protected and a token
 	// cookie is issued) but no session requirement. protected routes add
@@ -118,6 +150,15 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.Handle("GET /api/notion/databases/{id}/mapping", protected(s.handleNotionMapping))
 	mux.Handle("POST /api/notion/databases/create", protected(s.handleNotionCreateDatabase))
 	mux.Handle("POST /api/notion/destination", protected(s.handleNotionSetDestination))
+
+	// Email capture address (protected + user-scoped). Only mounted when
+	// ingestion is configured, so the UI cannot offer a flow that cannot
+	// complete — the same rule the Notion routes follow.
+	if s.cfg.EmailIngestConfigured() {
+		mux.Handle("GET /api/inbound", protected(s.handleInbound))
+		mux.Handle("POST /api/inbound/enable", protected(s.handleInboundEnable))
+		mux.Handle("POST /api/inbound/rotate", protected(s.handleInboundRotate))
+	}
 
 	// Submission app (protected + user-scoped).
 	mux.Handle("POST /api/submit", s.rateLimit(protected(s.handleSubmit)))

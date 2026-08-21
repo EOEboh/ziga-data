@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/EOEboh/ziga-data/internal/auth"
@@ -226,5 +227,116 @@ func TestNotionDestinationIsolation(t *testing.T) {
 	}
 	if got := len(fapi.pages()); got != before {
 		t.Fatalf("B's confirm wrote %d page(s) into A's workspace", got-before)
+	}
+}
+
+// enableIngestion turns email capture on for an existing authTest and rebuilds
+// the route tree, since Handler snapshots which routes are mounted.
+func enableIngestion(t *testing.T, a *authTest) *fakeRoutes {
+	t.Helper()
+	a.s.cfg.InboundEmailDomain = testInboundDoma
+	a.s.cfg.IngestSharedSecret = testIngestSecret
+	a.s.cfg.CloudflareAPIToken = "token"
+	a.s.cfg.CloudflareZoneID = "zone"
+	a.s.cfg.IngestWorkerName = "worker"
+	a.s.cfg.IngestDailyCap = 50
+	a.s.cfg.IngestBurst = 10
+	a.s.cfg.IngestMaxAddresses = 180
+	a.s.ingestLimiter = newIPLimiterBurst(60, 10)
+	routes := newFakeRoutes()
+	a.s.cfRoutes = routes
+	a.h = a.s.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}})
+	return routes
+}
+
+// TestIngestionDataIsolation extends the tenant guarantee to the email path.
+//
+// This is the one that matters most for ingestion: a lead now arrives without
+// anyone being present to notice where it went. If capture attributed mail to
+// the wrong tenant, nobody would catch it until a stranger's lead showed up in
+// someone's spreadsheet.
+func TestIngestionDataIsolation(t *testing.T) {
+	a := newAuthTest(t)
+	enableIngestion(t, a)
+	ctx := context.Background()
+
+	userA := mustVerifiedUser(t, a, "iso-a@x.com")
+	userB := mustVerifiedUser(t, a, "iso-b@x.com")
+	sessA := mustSession(t, a, userA)
+	sessB := mustSession(t, a, userB)
+	csrf := a.cookies[csrfCookie]
+
+	addrA := enableInbound(t, a.s, userA)
+	addrB := enableInbound(t, a.s, userB)
+	if addrA == addrB {
+		t.Fatal("two users must never share a capture address")
+	}
+
+	// --- each user sees only their own address ---
+	var gotA, gotB inboundResponse
+	json.Unmarshal(a.reqAs(sessA, csrf, "GET", "/api/inbound", nil).Body.Bytes(), &gotA)
+	json.Unmarshal(a.reqAs(sessB, csrf, "GET", "/api/inbound", nil).Body.Bytes(), &gotB)
+	if gotA.Address != addrA || gotB.Address != addrB {
+		t.Fatalf("addresses crossed tenants: A saw %q (want %q), B saw %q (want %q)",
+			gotA.Address, addrA, gotB.Address, addrB)
+	}
+
+	// --- a lead mailed to A's address belongs to A and is invisible to B ---
+	rec, out := postIngest(t, a.h, mailTo(addrA))
+	if rec.Code != http.StatusAccepted || out.Status != ingestAccepted {
+		t.Fatalf("ingest to A: %d %+v", rec.Code, out)
+	}
+	if sub, err := a.s.store.Get(ctx, userA, out.ID); err != nil || sub == nil {
+		t.Fatalf("A must own the captured lead: %v %v", sub, err)
+	}
+	if sub, err := a.s.store.Get(ctx, userB, out.ID); err != nil || sub != nil {
+		t.Fatalf("B must not be able to read A's captured lead: %v %v", sub, err)
+	}
+
+	// The queue endpoint is the surface the user actually looks at.
+	var queueB struct {
+		Items []submissionResponse `json:"items"`
+	}
+	json.Unmarshal(a.reqAs(sessB, csrf, "GET", "/api/queue", nil).Body.Bytes(), &queueB)
+	for _, item := range queueB.Items {
+		if item.ID == out.ID {
+			t.Fatal("A's captured lead appeared in B's review queue")
+		}
+	}
+
+	// --- quarantine rows are scoped too ---
+	evA := &store.IngestionEvent{
+		UserID: userA, Status: store.EventQuarantined, Reason: "machine_mail",
+		FromAddress: "news@example.com", Subject: "roundup", BodyExcerpt: "hello",
+	}
+	if err := a.s.store.InsertEvent(ctx, evA); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := a.s.store.GetEvent(ctx, userB, evA.ID); err != nil || got != nil {
+		t.Fatalf("B must not read A's quarantined mail: %v %v", got, err)
+	}
+	if n, err := a.s.store.CountEvents(ctx, userB, store.EventQuarantined); err != nil || n != 0 {
+		t.Fatalf("B's quarantine count leaked A's rows: %d %v", n, err)
+	}
+
+	// --- rotation is per-tenant: A rotating must not disturb B ---
+	if rec := a.reqAs(sessA, csrf, "POST", "/api/inbound/rotate", nil); rec.Code != http.StatusOK {
+		t.Fatalf("A rotate: %d %s", rec.Code, rec.Body)
+	}
+	stillB, err := a.s.store.ActiveInboundAddress(ctx, userB)
+	if err != nil || stillB == nil {
+		t.Fatalf("B lost their address when A rotated: %v %v", stillB, err)
+	}
+	if stillB.LocalPart+"@"+testInboundDoma != addrB {
+		t.Errorf("B's address changed when A rotated: %q", stillB.LocalPart)
+	}
+
+	// --- B's address still captures to B after A's rotation ---
+	rec, out = postIngest(t, a.h, mailTo(addrB))
+	if rec.Code != http.StatusAccepted || out.Status != ingestAccepted {
+		t.Fatalf("ingest to B after A rotated: %d %+v", rec.Code, out)
+	}
+	if sub, err := a.s.store.Get(ctx, userB, out.ID); err != nil || sub == nil {
+		t.Fatalf("B must own their own captured lead: %v %v", sub, err)
 	}
 }

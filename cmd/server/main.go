@@ -227,6 +227,21 @@ func main() {
 	}
 
 	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, notionCfg, box)
+
+	// Rotated-away capture addresses keep routing for a grace period, then
+	// their routing rules are released. Rules are a capped resource, so one
+	// that is never released is capacity permanently lost.
+	if cfg.EmailIngestConfigured() {
+		log.Info("email ingestion enabled", "domain", cfg.InboundEmailDomain,
+			"daily_cap", cfg.IngestDailyCap, "max_addresses", cfg.IngestMaxAddresses)
+		srv.ReleaseRetiredAddresses(context.Background())
+		go func() {
+			for range time.Tick(24 * time.Hour) {
+				srv.ReleaseRetiredAddresses(context.Background())
+			}
+		}()
+	}
+
 	addr := ":" + cfg.Port
 	log.Info("listening", "addr", addr, "model", cfg.LLMModel, "schema", cfg.Schema.Name)
 	if err := http.ListenAndServe(addr, srv.Handler(static)); err != nil {
