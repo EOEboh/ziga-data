@@ -64,6 +64,9 @@ export function ReviewPane({
           detectedSource={sub.result ? sub.result.source : null}
           showEditRerun
           onEditRerun={onEditRerun}
+          source={sub.source}
+          fromAddress={sub.from_address}
+          subject={sub.subject}
         />
       )}
 

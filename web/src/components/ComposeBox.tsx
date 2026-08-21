@@ -11,6 +11,7 @@ export function ComposeBox({
   onTextChange,
   onFileChange,
   onSubmit,
+  emailIngest = false,
 }: {
   text: string;
   file: File | null;
@@ -18,6 +19,10 @@ export function ComposeBox({
   onTextChange: (text: string) => void;
   onFileChange: (file: File | null) => void;
   onSubmit: () => void;
+  /** Show the email-capture hint. Discovery belongs here, where the user is
+      already thinking about getting a lead in — the account menu is where
+      they come back to it. */
+  emailIngest?: boolean;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +62,14 @@ export function ComposeBox({
           Extract fields
         </Button>
       </div>
+      {emailIngest && (
+        <p className="text-text-2 text-xs mt-4 pt-4 border-t border-line m-0">
+          …or have leads arrive on their own.{" "}
+          <a href="#/email" className="underline hover:text-text">
+            Set up email capture
+          </a>
+        </p>
+      )}
     </div>
   );
 }

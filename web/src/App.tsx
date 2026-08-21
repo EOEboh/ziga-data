@@ -8,11 +8,14 @@ import { ApiError, api } from "./api";
 import { AccountMenu } from "./components/AccountMenu";
 import { ComposeBox } from "./components/ComposeBox";
 import { HistoryView } from "./components/HistoryView";
+import { AwayBanner } from "./components/AwayBanner";
+import { QuarantineView } from "./components/QuarantineView";
+import { ForwardingSetup } from "./components/ForwardingSetup";
 import { DroppedFieldsNotice } from "./components/DroppedFieldsNotice";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { ReviewPane } from "./components/ReviewPane";
 import { TopBar } from "./components/TopBar";
-import { initialState, reducer } from "./state";
+import { initialState, reducer, type Route } from "./state";
 import { Me, Submission } from "./types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -26,13 +29,40 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
 
   // ---- async flows ----------------------------------------------------------
 
+  const emailIngest = me.config.email_ingest === true;
+
   async function refreshBadge(): Promise<void> {
     try {
       const q = await api.queue();
       dispatch({ type: "BADGE", count: q.count });
+      dispatch({ type: "AWAY_COUNT", count: q.captured_while_away ?? 0 });
     } catch {
       dispatch({ type: "BADGE", count: 0 });
     }
+    if (!emailIngest) return;
+    try {
+      const filtered = await api.quarantine();
+      dispatch({ type: "QUARANTINE_BADGE", count: filtered.items.length });
+    } catch {
+      // A failed quarantine count must not break the review queue: it is a
+      // secondary surface, and the badge simply stays as it was.
+    }
+  }
+
+  // dismissAway clears the "while you were away" banner by marking the queue
+  // seen. It affects only the count — the leads themselves are untouched.
+  async function dismissAway(): Promise<void> {
+    dispatch({ type: "AWAY_DISMISSED" });
+    try {
+      await api.markQueueSeen();
+    } catch {
+      // Cosmetic; the banner reappears next load at worst.
+    }
+  }
+
+  async function reviewAway(): Promise<void> {
+    await dismissAway();
+    await openQueue();
   }
 
   // advance loads the next queued item, or returns to the empty state.
@@ -41,6 +71,7 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
     try {
       const q = await api.queue();
       dispatch({ type: "BADGE", count: q.count });
+      dispatch({ type: "AWAY_COUNT", count: q.captured_while_away ?? 0 });
       next = q.items[0] ?? null;
     } catch {
       dispatch({ type: "BADGE", count: 0 });
@@ -242,6 +273,9 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
             ? previewRes.value
             : { columns: [], rows: [], error: "preview unavailable" },
       });
+      if (queueRes.status === "fulfilled") {
+        dispatch({ type: "AWAY_COUNT", count: queueRes.value.captured_while_away ?? 0 });
+      }
       if (queueRes.status === "fulfilled" && queueRes.value.items.length > 0) {
         dispatch({ type: "BADGE", count: queueRes.value.count });
         dispatch({ type: "ENTER_REVIEW", submission: queueRes.value.items[0] });
@@ -249,14 +283,34 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
         dispatch({ type: "BADGE", count: queueRes.status === "fulfilled" ? queueRes.value.count : 0 });
         dispatch({ type: "ENTER_EMPTY" });
       }
+      if (emailIngest) {
+        try {
+          const filtered = await api.quarantine();
+          dispatch({ type: "QUARANTINE_BADGE", count: filtered.items.length });
+        } catch {
+          // Secondary surface; the review queue must boot regardless.
+        }
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Hash routing: #/ (review) and #/history, no router library.
+  // Hash routing: #/ (review), #/history, #/quarantine, #/email. No router
+  // library — react-router handles auth/onboarding, this handles the app's
+  // own tabs.
   useEffect(() => {
-    const apply = () =>
-      dispatch({ type: "ROUTE", route: location.hash === "#/history" ? "history" : "review" });
+    const apply = () => {
+      const hash = location.hash;
+      const route: Route =
+        hash === "#/history"
+          ? "history"
+          : hash === "#/quarantine"
+            ? "quarantine"
+            : hash === "#/email"
+              ? "email"
+              : "review";
+      dispatch({ type: "ROUTE", route });
+    };
     apply();
     window.addEventListener("hashchange", apply);
     return () => window.removeEventListener("hashchange", apply);
@@ -275,7 +329,7 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
   // ---- render ---------------------------------------------------------------
 
   // The "New lead" button shows whenever the paste box itself is not on screen.
-  const newLeadVisible = state.booted && (state.route === "history" || state.phase !== "empty");
+  const newLeadVisible = state.booted && (state.route !== "review" || state.phase !== "empty");
 
   const pending =
     state.submission !== null
@@ -288,6 +342,8 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
         api={api}
         route={state.route}
         queueCount={state.queueCount}
+        quarantineCount={state.quarantineCount}
+        emailIngest={emailIngest}
         newLeadVisible={newLeadVisible}
         onNewLead={startComposing}
         onOpenQueue={openQueue}
@@ -298,8 +354,19 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
           <section>
             <HistoryView api={api} />
           </section>
-        ) : (
+        ) : state.route === "quarantine" ? (
           <section>
+            <QuarantineView api={api} onChanged={refreshBadge} />
+          </section>
+        ) : state.route === "email" ? (
+          <section>
+            <ForwardingSetup api={api} />
+          </section>
+        ) : (
+          <section className="space-y-4">
+            {state.booted && emailIngest && (
+              <AwayBanner count={state.awayCount} onReview={reviewAway} onDismiss={dismissAway} />
+            )}
             {state.booted && state.phase === "empty" && (
               <ComposeBox
                 text={state.composeText}
@@ -308,6 +375,7 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
                 onTextChange={(text) => dispatch({ type: "SET_COMPOSE_TEXT", text })}
                 onFileChange={(file) => dispatch({ type: "SET_COMPOSE_FILE", file })}
                 onSubmit={startExtraction}
+                emailIngest={emailIngest}
               />
             )}
             {state.booted && state.phase !== "empty" && (

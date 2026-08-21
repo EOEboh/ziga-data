@@ -37,6 +37,17 @@ type submissionResponse struct {
 	Error       string                        `json:"error,omitempty"`
 	Input       submissionInput               `json:"input"`
 	CreatedAt   time.Time                     `json:"created_at"`
+
+	// Source is the channel this lead arrived on. Distinct from the schema's
+	// own "source" field inside Result, which is what the lead says about
+	// where THEY came from.
+	Source store.Source `json:"source,omitempty"`
+	// Set for email-sourced leads, so the review pane can show where it came
+	// from. With forwarding involved, FromAddress is the original
+	// correspondent rather than whoever forwarded it.
+	FromAddress string     `json:"from_address,omitempty"`
+	Subject     string     `json:"subject,omitempty"`
+	ReceivedAt  *time.Time `json:"received_at,omitempty"`
 }
 
 type submissionInput struct {
@@ -151,6 +162,13 @@ func (s *Server) submissionResponse(sub *store.Submission, duplicate bool) submi
 			Text:     sub.InputText,
 			HasImage: len(sub.InputImage) > 0,
 		},
+		Source:      sub.Source,
+		FromAddress: sub.FromAddress,
+		Subject:     sub.Subject,
+	}
+	if !sub.ReceivedAt.IsZero() {
+		received := sub.ReceivedAt
+		resp.ReceivedAt = &received
 	}
 	if resp.Input.HasImage {
 		resp.Input.ImageURL = fmt.Sprintf("/api/submissions/%d/image", sub.ID)

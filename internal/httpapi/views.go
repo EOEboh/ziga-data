@@ -25,7 +25,22 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	for i := range subs {
 		items = append(items, s.submissionResponse(&subs[i], false))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"count": len(items), "items": items})
+
+	resp := map[string]any{"count": len(items), "items": items}
+
+	// "Captured while you were away": leads that arrived by email since the
+	// user last opened this queue. Ingestion means leads now turn up
+	// unattended, so the queue has to be able to say what it collected. A
+	// failure here degrades to omitting the count, never to failing the queue.
+	if s.cfg.EmailIngestConfigured() {
+		uid := userID(r)
+		if seen, err := s.store.QueueSeenAt(r.Context(), uid); err == nil && !seen.IsZero() {
+			if n, err := s.store.CountCapturedSince(r.Context(), uid, seen); err == nil && n > 0 {
+				resp["captured_while_away"] = n
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handlePreview returns the last rows of the connected sheet for the preview
@@ -168,12 +183,18 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		Excerpt   string          `json:"excerpt"`
 		Result    json.RawMessage `json:"result,omitempty"`
 		CreatedAt time.Time       `json:"created_at"`
+		// Source is the channel the lead arrived on, so history can show
+		// where each row came from — not the schema's own "source" field,
+		// which lives inside Result.
+		Source      store.Source `json:"source,omitempty"`
+		FromAddress string       `json:"from_address,omitempty"`
 	}
 	items := make([]item, 0, len(subs))
 	for _, sub := range subs {
 		items = append(items, item{
 			ID: sub.ID, Excerpt: sub.InputExcerpt,
 			Result: sub.Extraction, CreatedAt: sub.CreatedAt,
+			Source: sub.Source, FromAddress: sub.FromAddress,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
