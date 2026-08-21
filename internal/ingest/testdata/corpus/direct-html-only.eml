@@ -1,0 +1,13 @@
+Return-Path: <tunde.bello@brightpath.ng>
+Delivered-To: lead-k3m9x7qp2rt4v8wz@in.zigadata.com
+Received: by mx.cloudflare.net with SMTP id abc123;
+        Wed, 19 Aug 2026 09:12:00 +0000
+From: Tunde Bello <tunde.bello@brightpath.ng>
+To: <lead-k3m9x7qp2rt4v8wz@in.zigadata.com>
+Subject: Website enquiry
+Date: Wed, 19 Aug 2026 09:12:00 +0000
+Message-ID: <form-9931@websiteforms.io>
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><head><style>.wrap{color:#333}</style><title>Enquiry</title></head><body><div class="wrap"><p>Hello,</p><p>I run a small bakery in Lagos and I need an online store where customers can order cakes.</p><p>Reach me on <a href="https://track.example.com/r?u=mailto%3Atunde%40brightpath.ng">tunde.bello@brightpath.ng</a> or 0803 555 0199.</p><img src="https://track.example.com/pixel.gif" width="1" height="1"><p><a href="https://track.example.com/unsub">Unsubscribe</a></p></div><script>console.log("tracking")</script></body></html>

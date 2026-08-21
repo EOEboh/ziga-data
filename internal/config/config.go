@@ -97,6 +97,46 @@ type Config struct {
 	// request. Notion versions by date and pins behavior to the version
 	// string, so it lives here as one value rather than at the call sites.
 	NotionVersion string
+
+	// Email ingestion. When these are empty the feature is off and
+	// POST /api/ingest/email is not registered at all, so an unconfigured
+	// server 404s rather than exposing an unauthenticated route.
+	//
+	// InboundEmailDomain is the domain users' capture addresses live on
+	// (e.g. in.zigadata.com). It must be a domain used for nothing else:
+	// enabling mail routing on it changes its MX records.
+	InboundEmailDomain string
+	// IngestSharedSecret keys the HMAC on the ingestion webhook. Shared with
+	// the mail worker; never sent anywhere else.
+	IngestSharedSecret string
+	// CloudflareAPIToken / CloudflareZoneID / IngestWorkerName let the app
+	// provision a routing rule per address. A per-address rule is required
+	// because catch-all is not available on a subdomain, only at a zone apex.
+	CloudflareAPIToken string
+	CloudflareZoneID   string
+	IngestWorkerName   string
+	// IngestDailyCap and IngestBurst bound how much mail one user can push
+	// through extraction. This is the primary defence against an unbounded
+	// model bill: a user who forwards their whole inbox by accident hits the
+	// cap rather than the invoice.
+	IngestDailyCap int
+	IngestBurst    int
+	// IngestMaxAddresses caps how many capture addresses exist at once, kept
+	// below the mail provider's per-domain routing-rule limit so provisioning
+	// fails with our clear error rather than their opaque one.
+	IngestMaxAddresses int
+}
+
+// minIngestSecretLen is the shortest shared secret Load will accept. The
+// ingestion endpoint is unauthenticated apart from this HMAC and every call
+// costs money, so a guessable key is a boot failure rather than a warning.
+const minIngestSecretLen = 32
+
+// EmailIngestConfigured reports whether email ingestion is fully configured
+// and can be offered. Load guarantees this is all-or-nothing.
+func (c *Config) EmailIngestConfigured() bool {
+	return c.InboundEmailDomain != "" && c.IngestSharedSecret != "" &&
+		c.CloudflareAPIToken != "" && c.CloudflareZoneID != "" && c.IngestWorkerName != ""
 }
 
 // OAuthConfigured reports whether Google OAuth credentials are present.
@@ -166,6 +206,15 @@ func Load() (*Config, error) {
 		NotionOAuthClientSecret: os.Getenv("NOTION_OAUTH_CLIENT_SECRET"),
 		NotionOAuthRedirectURL:  os.Getenv("NOTION_OAUTH_REDIRECT_URL"),
 		NotionVersion:           envOr("NOTION_VERSION", DefaultNotionVersion),
+
+		InboundEmailDomain: strings.ToLower(strings.TrimSpace(os.Getenv("INBOUND_EMAIL_DOMAIN"))),
+		IngestSharedSecret: os.Getenv("INGEST_SHARED_SECRET"),
+		CloudflareAPIToken: os.Getenv("CLOUDFLARE_API_TOKEN"),
+		CloudflareZoneID:   os.Getenv("CLOUDFLARE_ZONE_ID"),
+		IngestWorkerName:   envOr("INGEST_WORKER_NAME", "ziga-email-ingest"),
+		IngestDailyCap:     50,
+		IngestBurst:        10,
+		IngestMaxAddresses: 180,
 	}
 	switch v := strings.ToLower(os.Getenv("ZIGA_DEV_MODE")); v {
 	case "", "0", "false":
@@ -223,6 +272,59 @@ func Load() (*Config, error) {
 	// mandatory — we must never store OAuth tokens in plaintext.
 	if (cfg.OAuthConfigured() || cfg.NotionConfigured()) && cfg.TokenEncryptionKey == "" {
 		return nil, fmt.Errorf("TOKEN_ENCRYPTION_KEY is required when OAuth is configured")
+	}
+
+	// Email ingestion is all-or-nothing, for the same reason as Notion above
+	// but with sharper failure modes: a domain with no shared secret would
+	// register an ingestion endpoint that anyone on the internet could post
+	// leads to, and a secret with no Cloudflare credentials would hand users
+	// an address that no mail can ever reach. Setting none of them is fine —
+	// ingestion is then simply not offered.
+	ingestVars := []struct {
+		name, value string
+	}{
+		{"INBOUND_EMAIL_DOMAIN", cfg.InboundEmailDomain},
+		{"INGEST_SHARED_SECRET", cfg.IngestSharedSecret},
+		{"CLOUDFLARE_API_TOKEN", cfg.CloudflareAPIToken},
+		{"CLOUDFLARE_ZONE_ID", cfg.CloudflareZoneID},
+		{"INGEST_WORKER_NAME", cfg.IngestWorkerName},
+	}
+	var setIngest, missingIngest []string
+	for _, v := range ingestVars {
+		if v.value == "" {
+			missingIngest = append(missingIngest, v.name)
+		} else {
+			setIngest = append(setIngest, v.name)
+		}
+	}
+	// INGEST_WORKER_NAME has a default, so it is always set; it only counts as
+	// evidence of intent when something else is too.
+	if len(setIngest) > 1 && len(missingIngest) > 0 {
+		return nil, fmt.Errorf("email ingestion is partially configured (%s set); missing: %s",
+			strings.Join(setIngest, ", "), strings.Join(missingIngest, ", "))
+	}
+	// The shared secret is the only thing standing in front of an endpoint
+	// that costs money to call, so a weak one is refused rather than warned
+	// about.
+	if cfg.IngestSharedSecret != "" && len(cfg.IngestSharedSecret) < minIngestSecretLen {
+		return nil, fmt.Errorf("INGEST_SHARED_SECRET must be at least %d characters (got %d); generate one with: head -c 32 /dev/urandom | base64",
+			minIngestSecretLen, len(cfg.IngestSharedSecret))
+	}
+	for _, v := range []struct {
+		env    string
+		target *int
+	}{
+		{"INGEST_DAILY_CAP", &cfg.IngestDailyCap},
+		{"INGEST_BURST", &cfg.IngestBurst},
+		{"INGEST_MAX_ADDRESSES", &cfg.IngestMaxAddresses},
+	} {
+		if raw := os.Getenv(v.env); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n <= 0 {
+				return nil, fmt.Errorf("invalid %s %q", v.env, raw)
+			}
+			*v.target = n
+		}
 	}
 	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
 		n, err := strconv.Atoi(v)

@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "blocked_sender",
+  "detail": "matched your blocked sender sales@spammy.example.com"
+}

@@ -15,6 +15,28 @@ type Input struct {
 	Image          []byte
 	ImageMediaType string // "image/png", "image/jpeg", "image/webp", "image/gif"
 	SubmissionDate time.Time
+	// Email is the envelope context of an ingested email, nil for pastes. It
+	// tells the model who sent the material and whether it was forwarded,
+	// which is what stops a forwarded lead being attributed to the forwarder.
+	Email *EmailMeta
+}
+
+// EmailMeta is the envelope of an ingested email.
+//
+// Every string here originates in message headers, which are set by whoever
+// sent the mail. It is therefore attacker-controlled and must be delimited and
+// labelled as data in the prompt exactly like the body is — never presented as
+// trusted context.
+type EmailMeta struct {
+	From     string // the lead's address, as resolved by the ingest pipeline
+	FromName string
+	Subject  string
+	// ForwardedBy is the address that forwarded the mail, when known.
+	ForwardedBy string
+	// Forwarded reports whether the material is a forwarded message or thread
+	// rather than a direct one.
+	Forwarded  bool
+	ReceivedAt time.Time
 }
 
 // Result is the structured extraction returned by the model.

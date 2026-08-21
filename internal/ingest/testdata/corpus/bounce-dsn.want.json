@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "machine_mail",
+  "detail": "null return-path (bounce or auto-reply)"
+}

@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "hello@designweekly.co",
+  "message_id": "\u003cbulk-771@mailer.example.com\u003e",
+  "from": {
+    "name": "Design Weekly",
+    "address": "hello@designweekly.co"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "10 typography trends for 2026",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {
+    "precedence": [
+      "bulk"
+    ]
+  },
+  "text": "This week: variable fonts, brutalist revivals, and why nobody uses Helvetica any more.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 565,
+  "truncated": false,
+  "worker_event": ""
+}

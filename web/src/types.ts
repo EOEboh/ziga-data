@@ -28,6 +28,16 @@ export interface SubmissionInput {
   image_url?: string;
 }
 
+/**
+ * How a lead arrived.
+ *
+ * Not to be confused with `ExtractionResult.source`, which is what the lead
+ * says about where THEY came from ("X DM", "referral") and is rendered as
+ * "Detected source". This one is the channel: did a human paste it, or did it
+ * arrive by email while nobody was looking.
+ */
+export type LeadSource = "paste" | "email";
+
 export interface Submission {
   id: number;
   status: Status;
@@ -38,11 +48,69 @@ export interface Submission {
   error?: string;
   input: SubmissionInput;
   created_at: string;
+  /** See LeadSource — the channel, not result.source. */
+  source?: LeadSource;
+  /** Set for email-sourced leads: who it came from, and what it was about. */
+  from_address?: string;
+  subject?: string;
+  received_at?: string;
 }
 
 export interface QueueResponse {
   count: number;
   items: Submission[];
+  /**
+   * Leads captured by email since the user last opened the queue. Ingestion
+   * changes the contract: leads now arrive while they are away, so the queue
+   * has to say what turned up.
+   */
+  captured_while_away?: number;
+}
+
+// --- Email ingestion ---
+
+/** The user's private capture address. */
+export interface InboundAddress {
+  /** Empty until the user turns email capture on. */
+  address?: string;
+  enabled: boolean;
+  /** Shown before opting in, so the feature can be explained. */
+  domain: string;
+  created_at?: string;
+}
+
+/** Why a message was filtered. The UI maps these to wording. */
+export type QuarantineReason =
+  | "blocked_sender"
+  | "machine_mail"
+  | "calendar_invite"
+  | "no_text"
+  | "too_short"
+  | "size_rejected"
+  | "parse_failed"
+  | "rate_limited"
+  | "forwarding_confirmation";
+
+export interface QuarantineItem {
+  id: number;
+  status: "quarantined" | "rescued" | "dismissed" | "verification";
+  reason: QuarantineReason | string;
+  /** The exact rule that fired, so "why was this filtered?" is answerable. */
+  detail?: string;
+  from_address?: string;
+  from_name?: string;
+  subject?: string;
+  excerpt: string;
+  received_at: string;
+  /** False once retention has cleared the body: dismissable, not rescuable. */
+  rescuable: boolean;
+  /** Set on verification items — the forwarding handshake. */
+  verify_code?: string;
+  verify_url?: string;
+}
+
+export interface QuarantineResponse {
+  items: QuarantineItem[];
 }
 
 export interface PreviewResponse {
@@ -91,6 +159,9 @@ export interface HistoryItem {
   excerpt: string;
   result?: ExtractionResult;
   created_at: string;
+  /** See LeadSource — the channel, not result.source. */
+  source?: LeadSource;
+  from_address?: string;
 }
 
 export interface HistoryResponse {
@@ -132,6 +203,8 @@ export interface Me {
     google_picker_api_key: string;
     google_project_number: string;
     notion_oauth: boolean;
+    /** Email capture is configured on this server and can be offered. */
+    email_ingest: boolean;
   };
 }
 

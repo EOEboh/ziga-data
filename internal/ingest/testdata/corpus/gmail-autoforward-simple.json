@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "chiamaka@eze-events.com",
+  "message_id": "\u003cCAH8x2@mail.gmail.com\u003e",
+  "from": {
+    "name": "Chiamaka Eze",
+    "address": "chiamaka@eze-events.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Event branding — quick question",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {
+    "delivered-to": [
+      "owner@gmail.com"
+    ],
+    "x-forwarded-for": [
+      "owner@gmail.com lead-k3m9x7qp2rt4v8wz@in.zigadata.com"
+    ],
+    "x-forwarded-to": [
+      "lead-k3m9x7qp2rt4v8wz@in.zigadata.com"
+    ]
+  },
+  "text": "Hi,\n\nI'm organising a conference in October for about 400 people and need full event branding — banners, badges, signage. What would that cost?\n\nChiamaka Eze\nEze Events",
+  "html": "",
+  "attachments": [],
+  "raw_size": 764,
+  "truncated": false,
+  "worker_event": ""
+}

@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "too_short",
+  "detail": "the message body was too short to contain a lead"
+}

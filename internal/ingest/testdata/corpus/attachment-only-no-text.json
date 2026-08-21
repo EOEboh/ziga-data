@@ -1,0 +1,40 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "scans@brightpath.ng",
+  "message_id": "<scan-9090@scanner.example.com>",
+  "from": {
+    "name": "Office Scanner",
+    "address": "scans@brightpath.ng"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Scanned document",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {
+    "return-path": [
+      "<scans@brightpath.ng>"
+    ],
+    "delivered-to": [
+      "lead-k3m9x7qp2rt4v8wz@in.zigadata.com"
+    ],
+    "content-type": [
+      "multipart/mixed; boundary=\"----=_Part_scan_0\""
+    ]
+  },
+  "text": "",
+  "html": "",
+  "attachments": [
+    {
+      "filename": "scan_20260819.pdf",
+      "mime_type": "application/pdf",
+      "size": 136
+    }
+  ],
+  "raw_size": 897,
+  "truncated": false,
+  "worker_event": ""
+}

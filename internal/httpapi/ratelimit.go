@@ -35,6 +35,10 @@ func newIPLimiterBurst(perMin, burst int) *ipLimiter {
 	return l
 }
 
+// get returns the bucket for one key. The key is usually an IP, but email
+// ingestion keys by inbound address and by user id instead: that traffic all
+// arrives from one upstream, so a per-IP budget there would be a single shared
+// bucket rather than a limit on anyone.
 func (l *ipLimiter) get(ip string) *rate.Limiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()

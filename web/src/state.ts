@@ -9,7 +9,9 @@
 import { FIELD_ORDER, FieldState, PreviewResponse, Submission, fieldValue } from "./types";
 
 export type Phase = "empty" | "extracting" | "reviewing" | "confirming" | "write_failed";
-export type Route = "review" | "history";
+// "quarantine" is the filtered-mail view; it exists only when the server has
+// email ingestion configured, but the route is harmless either way.
+export type Route = "review" | "history" | "quarantine" | "email";
 
 export interface AppState {
   phase: Phase;
@@ -46,6 +48,12 @@ export interface AppState {
   // green-tint settle fade on its last row.
   settleToken: number;
   queueCount: number;
+  // Outstanding filtered messages, for the Quarantine nav badge.
+  quarantineCount: number;
+  // Leads captured by email since the queue was last opened. Drives the
+  // "while you were away" banner; dismissing it zeroes this without touching
+  // the leads themselves.
+  awayCount: number;
   submitError: string | null;
   // Non-null while the write-error block (with Retry) is shown; the confirm
   // button hides so there is one primary action.
@@ -78,6 +86,8 @@ export const initialState: AppState = {
   preview: null,
   settleToken: 0,
   queueCount: 0,
+  quarantineCount: 0,
+  awayCount: 0,
   submitError: null,
   writeError: null,
   droppedFields: null,
@@ -87,6 +97,9 @@ export const initialState: AppState = {
 export type Action =
   | { type: "ROUTE"; route: Route }
   | { type: "BADGE"; count: number }
+  | { type: "QUARANTINE_BADGE"; count: number }
+  | { type: "AWAY_COUNT"; count: number }
+  | { type: "AWAY_DISMISSED" }
   | { type: "PREVIEW_LOADED"; preview: PreviewResponse }
   | { type: "SET_COMPOSE_TEXT"; text: string }
   | { type: "SET_COMPOSE_FILE"; file: File | null }
@@ -117,6 +130,15 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "BADGE":
       return { ...state, queueCount: action.count };
+
+    case "QUARANTINE_BADGE":
+      return { ...state, quarantineCount: action.count };
+
+    case "AWAY_COUNT":
+      return { ...state, awayCount: action.count };
+
+    case "AWAY_DISMISSED":
+      return { ...state, awayCount: 0 };
 
     case "PREVIEW_LOADED":
       return { ...state, preview: action.preview };

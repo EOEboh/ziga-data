@@ -14,8 +14,12 @@ on:
     # so a copy edit there has no effect on the binary — don't run the suite or
     # ship a release for one. A push touching both site/ and anything else
     # still triggers normally, and workflow_dispatch can force a deploy.
+    # worker/ is the Cloudflare Email Worker, deployed independently by
+    # worker.yml with wrangler. Like site/, it is outside the go:embed tree, so
+    # a change there cannot alter the binary.
     paths-ignore:
       - 'site/**'
+      - 'worker/**'
   workflow_dispatch:
 
 # One deploy at a time; don't cancel an in-flight deploy (a half-applied binary

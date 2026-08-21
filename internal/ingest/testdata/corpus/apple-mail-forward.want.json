@@ -1,0 +1,16 @@
+{
+  "decision": "accept",
+  "text_prefix": "Begin forwarded message: From: Ifeoma Nwosu \u003cifeoma@nwosu-interiors.com\u003e Subject",
+  "text_runes": 330,
+  "origin": {
+    "sender": "ifeoma@nwosu-interiors.com",
+    "subject": "Interior design consult",
+    "forwarded": true,
+    "method": "body:apple",
+    "confidence": "high",
+    "chose": "only",
+    "thread_count": 1,
+    "text_prefix": "Hi Sam, We've just taken a new office on Awolowo Road and need it fitt",
+    "signature_kept": true
+  }
+}

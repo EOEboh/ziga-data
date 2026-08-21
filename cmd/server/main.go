@@ -120,6 +120,11 @@ func main() {
 
 	// Retention: raw originals (full input text, image blobs) are purged
 	// RETENTION_DAYS after a submission settles; extraction results stay.
+	//
+	// Quarantined mail is purged on the same clock. It holds the full text of
+	// messages the user never asked to receive — a larger privacy surface than
+	// anything the paste path creates — so it must not be kept indefinitely
+	// just because nobody got round to dismissing it.
 	purge := func() {
 		cutoff := time.Now().UTC().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 		n, err := st.PurgeInputs(context.Background(), cutoff)
@@ -129,6 +134,14 @@ func main() {
 		}
 		if n > 0 {
 			log.Info("retention purge", "purged", n, "retention_days", cfg.RetentionDays)
+		}
+		m, err := st.PurgeIngestionBodies(context.Background(), cutoff)
+		if err != nil {
+			log.Error("ingestion retention purge", "err", err)
+			return
+		}
+		if m > 0 {
+			log.Info("ingestion retention purge", "purged", m, "retention_days", cfg.RetentionDays)
 		}
 	}
 	purge()
@@ -143,7 +156,7 @@ func main() {
 		extract.SystemPrompt(cfg.Schema),
 		extract.JSONSchema(cfg.Schema),
 		func(text string, in llm.Input) string {
-			return extract.UserText(text, in.SubmissionDate)
+			return extract.UserText(text, in.SubmissionDate, in.Email)
 		},
 	)
 
@@ -214,6 +227,21 @@ func main() {
 	}
 
 	srv := httpapi.New(cfg, log, extractor, st, writer, mailer, oauthCfg, notionCfg, box)
+
+	// Rotated-away capture addresses keep routing for a grace period, then
+	// their routing rules are released. Rules are a capped resource, so one
+	// that is never released is capacity permanently lost.
+	if cfg.EmailIngestConfigured() {
+		log.Info("email ingestion enabled", "domain", cfg.InboundEmailDomain,
+			"daily_cap", cfg.IngestDailyCap, "max_addresses", cfg.IngestMaxAddresses)
+		srv.ReleaseRetiredAddresses(context.Background())
+		go func() {
+			for range time.Tick(24 * time.Hour) {
+				srv.ReleaseRetiredAddresses(context.Background())
+			}
+		}()
+	}
+
 	addr := ":" + cfg.Port
 	log.Info("listening", "addr", addr, "model", cfg.LLMModel, "schema", cfg.Schema.Name)
 	if err := http.ListenAndServe(addr, srv.Handler(static)); err != nil {

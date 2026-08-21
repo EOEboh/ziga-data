@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Api } from "../api";
 import { relativeTime } from "../format";
+import { SourceBadge } from "./SourceBadge";
 import { HistoryItem } from "../types";
 
 // The last 50 written leads: name / need / date. Fetches on every visit
@@ -39,6 +40,7 @@ export function HistoryView({ api }: { api: Api }) {
           <span className="flex-1 text-text-2 overflow-hidden text-ellipsis whitespace-nowrap">
             {item.result?.need || item.excerpt}
           </span>
+          <SourceBadge source={item.source} />
           <span className="text-text-2 text-xs whitespace-nowrap">
             {item.result?.date || relativeTime(item.created_at)}
           </span>

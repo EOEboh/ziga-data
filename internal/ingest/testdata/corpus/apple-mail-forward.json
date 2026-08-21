@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "owner@gmail.com",
+  "message_id": "\u003cA1B2C3@mail.me.com\u003e",
+  "from": {
+    "name": "Sam Owner",
+    "address": "owner@gmail.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Fwd: Interior design consult",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Begin forwarded message:\n\nFrom: Ifeoma Nwosu \u003cifeoma@nwosu-interiors.com\u003e\nSubject: Interior design consult\nDate: 17 August 2026 at 10:22:41 WAT\nTo: Sam Owner \u003cowner@gmail.com\u003e\n\nHi Sam,\n\nWe've just taken a new office on Awolowo Road and need it fitted out. About 200 square metres. Could you visit next week? 0806 555 0110.\n\nIfeoma",
+  "html": "",
+  "attachments": [],
+  "raw_size": 780,
+  "truncated": false,
+  "worker_event": ""
+}

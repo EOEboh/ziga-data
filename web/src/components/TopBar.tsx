@@ -5,20 +5,25 @@ import { Destination } from "../types";
 import { Button } from "./Button";
 import { Mark } from "./Mark";
 
-// Brand, Review/History nav with the queue badge, the New lead button, the
+// Brand, Review/History/Quarantine nav with badges, the New lead button, the
 // destination dropdown, and the account menu.
 export function TopBar({
   api,
   route,
   queueCount,
+  quarantineCount,
+  emailIngest,
   newLeadVisible,
   onNewLead,
   onOpenQueue,
   accountMenu,
 }: {
   api: Api;
-  route: "review" | "history";
+  route: "review" | "history" | "quarantine" | "email";
   queueCount: number;
+  quarantineCount: number;
+  /** Email capture is configured on this server; hides the nav item when not. */
+  emailIngest: boolean;
   newLeadVisible: boolean;
   onNewLead: () => void;
   onOpenQueue: () => void;
@@ -47,6 +52,19 @@ export function TopBar({
         <a href="#/history" className={navLink(route === "history")}>
           History
         </a>
+        {emailIngest && (
+          <a href="#/quarantine" className={navLink(route === "quarantine")}>
+            Filtered
+            {quarantineCount > 0 && (
+              // Neutral, not green: filtered mail is worth a look, not a
+              // call to action. The green badge is reserved for leads
+              // actually waiting on the user.
+              <span className="bg-line text-text-2 rounded-full text-[11px] font-semibold min-w-[18px] h-[18px] px-[5px] inline-flex items-center justify-center">
+                {quarantineCount}
+              </span>
+            )}
+          </a>
+        )}
       </nav>
       {newLeadVisible && <Button onClick={onNewLead}>New lead</Button>}
       <div className="flex-1" />

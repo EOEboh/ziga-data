@@ -1,0 +1,16 @@
+{
+  "decision": "accept",
+  "text_prefix": "FYI -----Original Message----- From: Emeka Obi \u003cemeka.obi@harbourlogistics.com\u003e ",
+  "text_runes": 359,
+  "origin": {
+    "sender": "emeka.obi@harbourlogistics.com",
+    "subject": "Request for proposal",
+    "forwarded": true,
+    "method": "body:outlook",
+    "confidence": "high",
+    "chose": "only",
+    "thread_count": 1,
+    "text_prefix": "Dear Sir, We are seeking a vendor to redesign our logistics tracking p",
+    "signature_kept": true
+  }
+}

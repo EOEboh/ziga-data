@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "machine_mail",
+  "detail": "sender local part noreply@"
+}

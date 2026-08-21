@@ -9,7 +9,9 @@ import {
   NotionMapping,
   NotionMappingResponse,
   NotionResources,
+  InboundAddress,
   PreviewResponse,
+  QuarantineResponse,
   QueueResponse,
   SheetConnection,
   Submission,
@@ -54,6 +56,21 @@ export interface Api {
   createNotionDatabase(parentPageId: string): Promise<NotionConnection>;
   setNotionDestination(databaseId: string, mapping: NotionMapping): Promise<NotionConnection>;
   disconnectNotion(): Promise<void>;
+
+  // Email capture. These routes only exist when the server has ingestion
+  // configured (me.config.email_ingest), so the UI gates on that first.
+  inbound(): Promise<InboundAddress>;
+  enableInbound(): Promise<InboundAddress>;
+  rotateInbound(): Promise<InboundAddress>;
+  /** status "verification" narrows to pending forwarding handshakes. */
+  quarantine(status?: "verification"): Promise<QuarantineResponse>;
+  rescue(id: number): Promise<Submission>;
+  dismiss(id: number): Promise<void>;
+  blockedSenders(): Promise<string[]>;
+  blockSender(pattern: string): Promise<void>;
+  unblockSender(pattern: string): Promise<void>;
+  /** Marks the review queue seen, resetting the "while you were away" count. */
+  markQueueSeen(): Promise<void>;
 }
 
 // readCookie returns a document cookie value by name, or "".
@@ -162,6 +179,39 @@ class HttpApi implements Api {
   }
   async disconnectNotion(): Promise<void> {
     await postJSON("/api/notion/disconnect", {});
+  }
+
+  inbound(): Promise<InboundAddress> {
+    return request<InboundAddress>("/api/inbound");
+  }
+  enableInbound(): Promise<InboundAddress> {
+    return postJSON<InboundAddress>("/api/inbound/enable", {});
+  }
+  rotateInbound(): Promise<InboundAddress> {
+    return postJSON<InboundAddress>("/api/inbound/rotate", {});
+  }
+  quarantine(status?: "verification"): Promise<QuarantineResponse> {
+    const q = status ? `?status=${status}` : "";
+    return request<QuarantineResponse>(`/api/quarantine${q}`);
+  }
+  rescue(id: number): Promise<Submission> {
+    return postJSON<Submission>(`/api/quarantine/${id}/rescue`, {});
+  }
+  async dismiss(id: number): Promise<void> {
+    await postJSON(`/api/quarantine/${id}/dismiss`, {});
+  }
+  async blockedSenders(): Promise<string[]> {
+    const out = await request<{ patterns: string[] }>("/api/senders/blocked");
+    return out.patterns ?? [];
+  }
+  async blockSender(pattern: string): Promise<void> {
+    await postJSON("/api/senders/block", { pattern });
+  }
+  async unblockSender(pattern: string): Promise<void> {
+    await postJSON("/api/senders/unblock", { pattern });
+  }
+  async markQueueSeen(): Promise<void> {
+    await postJSON("/api/queue/seen", {});
   }
 }
 

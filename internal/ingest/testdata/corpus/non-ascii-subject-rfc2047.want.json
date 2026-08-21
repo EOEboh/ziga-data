@@ -1,0 +1,15 @@
+{
+  "decision": "accept",
+  "text_prefix": "Bonjour, Nous cherchons un prestataire pour refondre notre site vitrine. Le budg",
+  "text_runes": 183,
+  "origin": {
+    "sender": "amelie@atelier-rousseau.fr",
+    "subject": "Devis pour refonte du site — urgent",
+    "forwarded": false,
+    "method": "direct",
+    "confidence": "high",
+    "chose": "only",
+    "text_prefix": "Bonjour, Nous cherchons un prestataire pour refondre notre site vitrin",
+    "signature_kept": true
+  }
+}

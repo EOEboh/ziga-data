@@ -88,6 +88,20 @@ export function AccountMenu({ api, me, reload }: { api: Api; me: Me; reload: () 
           <button type="button" onClick={() => nav("/onboarding")} className={item}>
             Change destination
           </button>
+          {me.config.email_ingest && (
+            // The compose box carries the discovery hint; this is where a user
+            // comes back to it once they know it exists.
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                location.hash = "#/email";
+              }}
+              className={item}
+            >
+              Email capture
+            </button>
+          )}
           {me.google_connected && (
             <button type="button" onClick={disconnectGoogle} className={item}>
               Disconnect Google

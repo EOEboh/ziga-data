@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "ada@lumen.studio",
+  "message_id": "\u003cshort-1@mail.example.com\u003e",
+  "from": {
+    "name": "Ada Okafor",
+    "address": "ada@lumen.studio"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Re: Landing page",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Thanks!",
+  "html": "",
+  "attachments": [],
+  "raw_size": 439,
+  "truncated": false,
+  "worker_event": ""
+}

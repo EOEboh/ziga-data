@@ -13,7 +13,10 @@ import {
   NotionMapping,
   NotionMappingResponse,
   NotionResources,
+  InboundAddress,
   PreviewResponse,
+  QuarantineItem,
+  QuarantineResponse,
   QueueResponse,
   SheetConnection,
   Submission,
@@ -22,6 +25,68 @@ import {
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const MOCK_NOTION = new URLSearchParams(location.search).get("notion") ?? "";
+// ?email=off walks the pre-opt-in state; ?verify=1 starts with a pending
+// forwarding-confirmation handshake so the code banner is demoable.
+const MOCK_EMAIL = new URLSearchParams(location.search).get("email") ?? "";
+const MOCK_VERIFY = new URLSearchParams(location.search).has("verify");
+
+// Filtered mail across three different reasons, so the quarantine list shows
+// its range: a newsletter, an out-of-office, and one whose body retention has
+// already cleared (dismissable but not rescuable).
+const quarantineFixtures: QuarantineItem[] = [
+  {
+    id: 501,
+    status: "quarantined",
+    reason: "machine_mail",
+    detail: "list-unsubscribe header present (newsletter or mailing list)",
+    from_address: "news@toolkit.example.com",
+    from_name: "Toolkit News",
+    subject: "New in Toolkit: automations",
+    excerpt: "Automations are here. Build workflows without code, and ship faster than ever before.",
+    received_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+    rescuable: true,
+  },
+  {
+    id: 502,
+    status: "quarantined",
+    reason: "machine_mail",
+    detail: "subject looks like an auto-reply or delivery report",
+    from_address: "yemi@partnerfirm.example.com",
+    from_name: "Yemi Bakare",
+    subject: "Out of Office: your enquiry",
+    excerpt: "Thank you for your email. I am on annual leave until 30 August with limited access to email.",
+    received_at: new Date(Date.now() - 26 * 3600_000).toISOString(),
+    rescuable: true,
+  },
+  {
+    id: 503,
+    status: "quarantined",
+    reason: "too_short",
+    detail: "the message body was too short to contain a lead",
+    from_address: "ada@lumen.studio",
+    from_name: "Ada Okafor",
+    subject: "Re: Landing page",
+    excerpt: "Thanks!",
+    received_at: new Date(Date.now() - 21 * 86400_000).toISOString(),
+    // Retention has cleared the body: the UI must offer Dismiss but not
+    // "Send to review", which would fail.
+    rescuable: false,
+  },
+];
+
+const verificationFixture: QuarantineItem = {
+  id: 601,
+  status: "verification",
+  reason: "forwarding_confirmation",
+  from_address: "forwarding-noreply@google.com",
+  from_name: "Gmail Team",
+  subject: "Gmail Forwarding Confirmation (#338214849) - Receive Mail from you@example.com",
+  excerpt: "you@example.com has requested to automatically forward mail to your address.",
+  received_at: new Date().toISOString(),
+  rescuable: false,
+  verify_code: "338214849",
+  verify_url: "https://mail.google.com/mail/vf-%5BANGjdJ8x2%5D-DhSl3nQ4kZ",
+};
 
 const COLUMNS = ["date", "name", "contact", "source", "need", "notes", "flags"];
 
@@ -86,15 +151,136 @@ export function mockConnectNotion(api: Api): boolean {
   return false;
 }
 
+// A lead that arrived by email while the user was away, so ?mock=1 walks the
+// source badge, the sender/subject header block, and the away banner without a
+// mail provider anywhere in the loop.
+const capturedLead: Submission = {
+  id: 90,
+  status: "pending",
+  result: {
+    name: "Chiamaka Eze",
+    contact: "chiamaka@eze-events.com",
+    source: "forwarded email",
+    need: "Full event branding for a 400-person conference in October",
+    date: "2026-08-19",
+    notes: "Banners, badges and signage",
+    confidence: "high",
+    missing_fields: [],
+    multiple_leads_detected: false,
+  },
+  field_states: { name: "ok", contact: "ok", source: "ok", date: "ok", need: "ok", notes: "ok" },
+  input: {
+    text:
+      "Hi,\n\nI'm organising a conference in October for about 400 people and need full event " +
+      "branding — banners, badges, signage. What would that cost?\n\nChiamaka Eze\nEze Events",
+    has_image: false,
+  },
+  created_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+  source: "email",
+  from_address: "chiamaka@eze-events.com",
+  subject: "Event branding — quick question",
+};
+
 export class MockApi implements Api {
   private nextId = 100;
   private fixtureIdx = 0;
-  private pending = new Map<number, Submission>();
+  private pending = new Map<number, Submission>(
+    MOCK_EMAIL === "off" ? [] : [[capturedLead.id, capturedLead]],
+  );
   private rows: string[][] = [
     ["2026-07-14", "Lena Fischer", "lena@fischer.dev", "referral", "API integration help", "", ""],
     ["2026-07-15", "Sam Torres", "@samtorres", "LinkedIn", "Brand identity refresh", "urgent", ""],
     ["2026-07-16", "Priya Nair", "priya@nair.co", "cold email", "Quarterly tax filing", "", ""],
   ];
+
+  // --- Email capture -------------------------------------------------------
+  //
+  // ?verify=1 starts with a pending forwarding-confirmation handshake, so the
+  // code banner is demoable without a mail provider — the same trick ?notion=
+  // already uses for OAuth.
+  private inboundAddress: string | null = MOCK_EMAIL === "off" ? null : "lead-k3m9x7qp2rt4v8wz@in.zigadata.com";
+  private quarantined: QuarantineItem[] = [...quarantineFixtures];
+  private verifications: QuarantineItem[] = MOCK_VERIFY ? [verificationFixture] : [];
+  private blocked: string[] = [];
+  private awayCount = MOCK_EMAIL === "off" ? 0 : 2;
+
+  async inbound(): Promise<InboundAddress> {
+    await delay(120);
+    return {
+      address: this.inboundAddress ?? undefined,
+      enabled: this.inboundAddress !== null,
+      domain: "in.zigadata.com",
+      created_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
+    };
+  }
+
+  async enableInbound(): Promise<InboundAddress> {
+    await delay(600);
+    this.inboundAddress = "lead-k3m9x7qp2rt4v8wz@in.zigadata.com";
+    return this.inbound();
+  }
+
+  async rotateInbound(): Promise<InboundAddress> {
+    await delay(600);
+    this.inboundAddress = "lead-p8w1e4v2rt9x3qm7@in.zigadata.com";
+    return this.inbound();
+  }
+
+  async quarantine(status?: "verification"): Promise<QuarantineResponse> {
+    await delay(150);
+    return { items: status === "verification" ? [...this.verifications] : [...this.quarantined] };
+  }
+
+  async rescue(id: number): Promise<Submission> {
+    await delay(700);
+    const item = this.quarantined.find((q) => q.id === id);
+    this.quarantined = this.quarantined.filter((q) => q.id !== id);
+    const sub: Submission = {
+      id: this.nextId++,
+      status: "pending",
+      result: JSON.parse(JSON.stringify(fixtures[0].result)),
+      field_states: { ...fixtures[0].field_states },
+      input: { text: item?.excerpt ?? "", has_image: false },
+      created_at: new Date().toISOString(),
+      source: "email",
+      from_address: item?.from_address,
+      subject: item?.subject,
+    };
+    this.pending.set(sub.id, sub);
+    return sub;
+  }
+
+  async dismiss(id: number): Promise<void> {
+    await delay(200);
+    this.quarantined = this.quarantined.filter((q) => q.id !== id);
+    this.verifications = this.verifications.filter((q) => q.id !== id);
+  }
+
+  async blockedSenders(): Promise<string[]> {
+    await delay(100);
+    return [...this.blocked];
+  }
+
+  async blockSender(pattern: string): Promise<void> {
+    await delay(200);
+    // Mirrors the server guard: blocking the confirmation sender would let a
+    // user permanently break their own forwarding setup.
+    if (/^@?google\.com$|forwarding-noreply@google\.com$/i.test(pattern.trim())) {
+      throw new ApiError("That address delivers your forwarding confirmation codes, so it can't be blocked", 400);
+    }
+    const p = pattern.trim().toLowerCase();
+    if (!this.blocked.includes(p)) this.blocked.push(p);
+  }
+
+  async unblockSender(pattern: string): Promise<void> {
+    await delay(150);
+    this.blocked = this.blocked.filter((p) => p !== pattern.trim().toLowerCase());
+  }
+
+  async markQueueSeen(): Promise<void> {
+    await delay(80);
+    this.awayCount = 0;
+  }
 
   async submit(form: FormData): Promise<Submission> {
     await delay(900);
@@ -150,7 +336,7 @@ export class MockApi implements Api {
 
   async queue(): Promise<QueueResponse> {
     const items = [...this.pending.values()].reverse();
-    return { count: items.length, items };
+    return { count: items.length, items, captured_while_away: this.awayCount };
   }
 
   async preview(): Promise<PreviewResponse> {
@@ -211,6 +397,7 @@ export class MockApi implements Api {
         google_picker_api_key: "mock-key",
         google_project_number: "575697153359",
         notion_oauth: true,
+        email_ingest: true,
       },
     };
   }

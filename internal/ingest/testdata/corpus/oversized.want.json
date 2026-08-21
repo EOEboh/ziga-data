@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "size_rejected",
+  "detail": "message exceeded the size limit and was not fetched"
+}

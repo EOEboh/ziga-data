@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "ada@lumen.studio",
+  "message_id": "\u003cCAF7a1@mail.lumen.studio\u003e",
+  "from": {
+    "name": "Ada Okafor",
+    "address": "ada@lumen.studio"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Landing page for our March launch",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Hi there,\n\nWe're launching a new product in March and need a landing page built. Budget is around $2,500. Can you take it on?\n\nBest,\nAda Okafor\nLumen Studio\n+234 802 555 0134",
+  "html": "",
+  "attachments": [],
+  "raw_size": 630,
+  "truncated": false,
+  "worker_event": ""
+}

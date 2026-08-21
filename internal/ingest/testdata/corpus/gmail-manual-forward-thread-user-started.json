@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "owner@gmail.com",
+  "message_id": "\u003cCAJ3b6@mail.gmail.com\u003e",
+  "from": {
+    "name": "Sam Owner",
+    "address": "owner@gmail.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Fwd: Re: Following up on your brochure",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "---------- Forwarded message ---------\nFrom: Halima Yusuf \u003chalima@yusuf-textiles.com\u003e\nDate: Tue, 18 Aug 2026 at 11:30\nSubject: Re: Following up on your brochure\nTo: Sam Owner \u003cowner@gmail.com\u003e\n\nYes please — we'd want 500 brochures printed for our showroom, and possibly a redesign. Call me on 0705 555 0121.\n\nHalima Yusuf\nYusuf Textiles\n\n---------- Forwarded message ---------\nFrom: Sam Owner \u003cowner@gmail.com\u003e\nDate: Mon, 17 Aug 2026 at 08:00\nSubject: Following up on your brochure\nTo: Halima Yusuf \u003chalima@yusuf-textiles.com\u003e\n\nHi Halima, just checking whether you still need print work done.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 1059,
+  "truncated": false,
+  "worker_event": ""
+}

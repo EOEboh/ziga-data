@@ -1,0 +1,15 @@
+{
+  "decision": "accept",
+  "text_prefix": "Good afternoon, We would like a booking system for our clinic so patients can re",
+  "text_runes": 191,
+  "origin": {
+    "sender": "f.adeyemi@clinicplus.ng",
+    "subject": "Clinic booking system",
+    "forwarded": true,
+    "method": "header:auto-forward",
+    "confidence": "high",
+    "chose": "sole-header",
+    "text_prefix": "Good afternoon, We would like a booking system for our clinic so patie",
+    "signature_kept": true
+  }
+}

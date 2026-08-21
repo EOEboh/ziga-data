@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "no_text",
+  "detail": "the message body was empty; attachments are not read in this version"
+}

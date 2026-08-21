@@ -1,0 +1,31 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "news@toolkit.example.com",
+  "message_id": "\u003cnews-8891@campaign.example.com\u003e",
+  "from": {
+    "name": "Toolkit News",
+    "address": "news@toolkit.example.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "New in Toolkit: automations",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {
+    "list-id": [
+      "Toolkit News \u003cnews.toolkit.example.com\u003e"
+    ],
+    "list-unsubscribe": [
+      "\u003chttps://toolkit.example.com/unsub?id=99\u003e, \u003cmailto:unsub@toolkit.example.com\u003e"
+    ]
+  },
+  "text": "Automations are here. Build workflows without code. Read more at toolkit.example.com/blog",
+  "html": "\u003chtml\u003e\u003cbody\u003e\u003ch1\u003eAutomations are here\u003c/h1\u003e\u003cp\u003eBuild workflows without code. \u003ca href=\"https://toolkit.example.com/blog\"\u003eRead more\u003c/a\u003e\u003c/p\u003e\u003cp\u003e\u003ca href=\"https://toolkit.example.com/unsub?id=99\"\u003eUnsubscribe\u003c/a\u003e\u003c/p\u003e\u003c/body\u003e\u003c/html\u003e",
+  "attachments": [],
+  "raw_size": 1101,
+  "truncated": false,
+  "worker_event": ""
+}

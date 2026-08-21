@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "amelie@atelier-rousseau.fr",
+  "message_id": "\u003cUTF8-77@mail.example.fr\u003e",
+  "from": {
+    "name": "Amélie Rousseau",
+    "address": "amelie@atelier-rousseau.fr"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Devis pour refonte du site — urgent",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Bonjour,\n\nNous cherchons un prestataire pour refondre notre site vitrine. Le budget est d'environ 4 000 €. Merci de me recontacter au +33 6 12 34 56 78.\n\nCordialement,\nAmélie Rousseau",
+  "html": "",
+  "attachments": [],
+  "raw_size": 729,
+  "truncated": false,
+  "worker_event": ""
+}

@@ -250,6 +250,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			"google_picker_api_key": s.cfg.GooglePickerAPIKey,
 			"google_project_number": s.cfg.GoogleProjectNumber,
 			"notion_oauth":          s.notionEnabled(),
+			"email_ingest":          s.cfg.EmailIngestConfigured(),
 		},
 	}
 	uid, ok := s.sessionUser(r)

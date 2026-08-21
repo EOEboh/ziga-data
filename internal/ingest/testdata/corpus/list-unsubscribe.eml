@@ -1,0 +1,23 @@
+Return-Path: <news@toolkit.example.com>
+Delivered-To: lead-k3m9x7qp2rt4v8wz@in.zigadata.com
+Received: by mx.cloudflare.net with SMTP id abc123;
+        Wed, 19 Aug 2026 09:12:00 +0000
+From: Toolkit News <news@toolkit.example.com>
+To: <lead-k3m9x7qp2rt4v8wz@in.zigadata.com>
+Subject: New in Toolkit: automations
+Date: Wed, 19 Aug 2026 09:12:00 +0000
+Message-ID: <news-8891@campaign.example.com>
+List-Unsubscribe: <https://toolkit.example.com/unsub?id=99>, <mailto:unsub@toolkit.example.com>
+List-Id: Toolkit News <news.toolkit.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_1_1234"
+
+------=_Part_1_1234
+Content-Type: text/plain; charset=UTF-8
+
+Automations are here. Build workflows without code. Read more at toolkit.example.com/blog
+------=_Part_1_1234
+Content-Type: text/html; charset=UTF-8
+
+<html><body><h1>Automations are here</h1><p>Build workflows without code. <a href="https://toolkit.example.com/blog">Read more</a></p><p><a href="https://toolkit.example.com/unsub?id=99">Unsubscribe</a></p></body></html>
+------=_Part_1_1234--

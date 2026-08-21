@@ -1,0 +1,5 @@
+{
+  "decision": "quarantine",
+  "reason": "calendar_invite",
+  "detail": "calendar invite attached with no accompanying message"
+}

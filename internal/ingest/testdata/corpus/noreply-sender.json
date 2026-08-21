@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "to": "lead-k3m9x7qp2rt4v8wz@in.zigadata.com",
+  "envelope_from": "noreply@shopify.com",
+  "message_id": "\u003cnotify-5512@shopify.com\u003e",
+  "from": {
+    "name": "Shopify",
+    "address": "noreply@shopify.com"
+  },
+  "reply_to": {
+    "name": "",
+    "address": ""
+  },
+  "subject": "Your store report is ready",
+  "date": "2026-08-19T09:12:00Z",
+  "received_at": "2026-08-19T09:12:03Z",
+  "headers": {},
+  "text": "Your weekly store report is now available. Log in to view your sales, sessions and conversion rate.",
+  "html": "",
+  "attachments": [],
+  "raw_size": 543,
+  "truncated": false,
+  "worker_event": ""
+}

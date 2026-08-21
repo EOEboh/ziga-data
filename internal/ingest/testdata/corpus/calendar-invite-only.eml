@@ -1,0 +1,50 @@
+Return-Path: <kemi@partner.example.com>
+Delivered-To: lead-k3m9x7qp2rt4v8wz@in.zigadata.com
+Received: by mx.cloudflare.net with SMTP id abc123;
+        Wed, 19 Aug 2026 09:12:00 +0000
+From: Kemi Alabi <kemi@partner.example.com>
+To: <lead-k3m9x7qp2rt4v8wz@in.zigadata.com>
+Subject: Invitation: Project kickoff @ Thu Aug 27, 2026
+Date: Wed, 19 Aug 2026 09:12:00 +0000
+Message-ID: <invite-4410@calendar.google.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="----=_Part_cal_0"
+
+------=_Part_cal_0
+Content-Type: multipart/alternative; boundary="----=_Part_cal_1"
+
+------=_Part_cal_1
+Content-Type: text/plain; charset=UTF-8
+
+When: Thu Aug 27, 2026 10am
+
+------=_Part_cal_1
+Content-Type: text/calendar; charset=UTF-8; method=REQUEST
+
+BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:REQUEST
+BEGIN:VEVENT
+DTSTART:20260827T100000Z
+DTEND:20260827T110000Z
+DTSTAMP:20260819T091200Z
+ORGANIZER;CN=Kemi Alabi:mailto:kemi@partner.example.com
+UID:4410@google.com
+SUMMARY:Project kickoff
+END:VEVENT
+END:VCALENDAR
+
+------=_Part_cal_1--
+
+------=_Part_cal_0
+Content-Type: application/ics; name="invite.ics"
+Content-Disposition: attachment; filename="invite.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSClZFUlNJT046Mi4wCkJFR0lOOlZFVkVOVApTVU1NQVJZOlByb2plY3Qg
+a2lja29mZgpEVFNUQVJUOjIwMjYwODI3VDEwMDAwMFoKRU5EOlZFVkVOVApFTkQ6VkNBTEVOREFS
+Cg==
+
+------=_Part_cal_0--

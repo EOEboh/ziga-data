@@ -270,3 +270,131 @@ func TestNotionVersionOverridable(t *testing.T) {
 		t.Fatalf("NotionVersion = %q, want the override", cfg.NotionVersion)
 	}
 }
+
+// A valid ingestion secret for tests: long enough to pass the length guard.
+const testIngestSecret = "0123456789abcdef0123456789abcdef"
+
+func setIngestVars(t *testing.T) {
+	t.Helper()
+	t.Setenv("INBOUND_EMAIL_DOMAIN", "in.example.com")
+	t.Setenv("INGEST_SHARED_SECRET", testIngestSecret)
+	t.Setenv("CLOUDFLARE_API_TOKEN", "cf-token")
+	t.Setenv("CLOUDFLARE_ZONE_ID", "zone-id")
+}
+
+func TestEmailIngestOffByDefault(t *testing.T) {
+	setup(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Setting none of the vars is a supported configuration: ingestion is
+	// simply not offered, and the endpoint is never mounted.
+	if cfg.EmailIngestConfigured() {
+		t.Fatal("ingestion must be off when nothing is configured")
+	}
+}
+
+func TestEmailIngestFullyConfigured(t *testing.T) {
+	setup(t)
+	setIngestVars(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EmailIngestConfigured() {
+		t.Fatal("want ingestion enabled with every var set")
+	}
+	if cfg.InboundEmailDomain != "in.example.com" {
+		t.Errorf("domain = %q", cfg.InboundEmailDomain)
+	}
+	// The worker name has a sensible default so it is one less thing to get
+	// wrong in a deploy.
+	if cfg.IngestWorkerName == "" {
+		t.Error("worker name must default rather than be required")
+	}
+	if cfg.IngestDailyCap <= 0 || cfg.IngestBurst <= 0 || cfg.IngestMaxAddresses <= 0 {
+		t.Errorf("caps must have positive defaults: %+v", cfg)
+	}
+	// The address budget must stay under the provider's per-domain rule cap,
+	// or we hand provisioning failures to users instead of catching them.
+	if cfg.IngestMaxAddresses >= 200 {
+		t.Errorf("IngestMaxAddresses = %d, must leave headroom under the 200-rule limit", cfg.IngestMaxAddresses)
+	}
+}
+
+func TestEmailIngestPartialConfigurationRefusesToBoot(t *testing.T) {
+	// A domain with no shared secret would mount an ingestion endpoint with
+	// nothing to authenticate against; a secret with no Cloudflare credentials
+	// would hand out addresses no mail can ever reach. Both are worse than not
+	// starting.
+	cases := []struct {
+		name  string
+		unset string
+	}{
+		{"domain without the rest", "INGEST_SHARED_SECRET"},
+		{"secret without cloudflare", "CLOUDFLARE_API_TOKEN"},
+		{"no zone", "CLOUDFLARE_ZONE_ID"},
+		{"no domain", "INBOUND_EMAIL_DOMAIN"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setup(t)
+			setIngestVars(t)
+			t.Setenv(c.unset, "")
+			_, err := Load()
+			if err == nil {
+				t.Fatal("partial ingestion configuration must refuse to boot")
+			}
+			if !strings.Contains(err.Error(), c.unset) {
+				t.Errorf("error must name the missing var %q, got: %v", c.unset, err)
+			}
+		})
+	}
+}
+
+func TestEmailIngestRejectsAWeakSecret(t *testing.T) {
+	setup(t)
+	setIngestVars(t)
+	t.Setenv("INGEST_SHARED_SECRET", "short")
+
+	// The HMAC is the only thing in front of an endpoint that costs money to
+	// call, so a guessable key is a boot failure, not a warning.
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a short ingestion secret must refuse to boot")
+	}
+	if !strings.Contains(err.Error(), "INGEST_SHARED_SECRET") {
+		t.Errorf("error must name the var, got: %v", err)
+	}
+}
+
+func TestIngestCapsValidated(t *testing.T) {
+	for _, v := range []string{"INGEST_DAILY_CAP", "INGEST_BURST", "INGEST_MAX_ADDRESSES"} {
+		for _, bad := range []string{"0", "-1", "lots"} {
+			t.Run(v+"="+bad, func(t *testing.T) {
+				setup(t)
+				setIngestVars(t)
+				t.Setenv(v, bad)
+				if _, err := Load(); err == nil {
+					t.Fatalf("%s=%q must be rejected: a nonsense cap is either no limit at all or a total block", v, bad)
+				}
+			})
+		}
+	}
+}
+
+func TestInboundDomainNormalised(t *testing.T) {
+	setup(t)
+	setIngestVars(t)
+	t.Setenv("INBOUND_EMAIL_DOMAIN", "  IN.Example.COM  ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Recipient domains arrive lowercased from the mail worker; a config value
+	// that differs only in case would reject every message.
+	if cfg.InboundEmailDomain != "in.example.com" {
+		t.Errorf("domain = %q, want it lowercased and trimmed", cfg.InboundEmailDomain)
+	}
+}

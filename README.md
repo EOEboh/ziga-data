@@ -48,6 +48,19 @@ Two connection states surface to the user rather than failing a write: a user wi
 5. `POST /api/submissions/{id}/confirm` writes the (possibly edited) row to your sheet (3 attempts, exponential backoff). A terminal failure keeps the submission as `failed_write` with the edited data intact; the Retry button is the same confirm call
 6. If multiple leads are detected in one submission, only the primary one is extracted and the review pane shows a banner
 
+## How an emailed lead flows
+
+Each user can turn on a private capture address (`lead-<16 random chars>@in.zigadata.com`). Mail sent or auto-forwarded there ends up in the same review queue, and **still waits for a human** — ingestion automates capture, never confirmation.
+
+1. Cloudflare Email Routing matches the address and hands the message to the Worker in [`worker/email-ingest/`](worker/email-ingest/)
+2. The Worker parses MIME and `POST`s JSON to `/api/ingest/email`, signed with HMAC-SHA256 over the request body. It never decides whether something is a lead — all judgement lives here, where it is testable
+3. The **filter pipeline** runs before any model call, cheapest check first: blocked senders → forwarding-confirmation handshake → machine mail → structure → HTML→text → length. Anything filtered becomes a visible quarantine row, never a drop
+4. Dedup by Message-ID *and* content hash, then the per-user daily cap. Dedup runs first so a mail system's retry never spends budget
+5. **Origin resolution** decides whose lead it is. An auto-forward preserves the original `From:`; a manual forward does not, and the sender is parsed out of the body — for a thread, the *earliest* message, skipping the user's own
+6. Extraction runs through the same `ingestLead` path as a paste, and the result lands as `pending`
+
+**Never silently lost.** Every rejection is recorded and reachable: filtered mail in the quarantine view with the reason and a one-click rescue, and mail we could not deliver at all forwarded to a fallback mailbox by the Worker.
+
 **Dedup semantics.** The dedup key is the SHA-256 of the submitted content plus a UTC day bucket, so identical content is blocked for the rest of the day — except after a discard. Discarding is a *soft delete*: the row is kept with status `discarded` (its original input is later purged, see retention), but its dedup hash is rewritten to a per-row tombstone, so discarding a submission immediately frees its content for genuine resubmission the same day. Discarded submissions never appear in the queue or history and can no longer be confirmed.
 
 ## Local setup
@@ -105,6 +118,9 @@ The Notion path is walkable there too:
 | `/?mock=1` | Google Sheet destination (the default) |
 | `/onboarding-notion?mock=1` | The Notion connect screen; "Connect Notion" simulates returning from consent |
 | `/?mock=1&notion=connected` | Already on a Notion destination |
+| `/?mock=1&verify=1#/email` | Email capture setup, with a pending forwarding-confirmation code |
+| `/?mock=1#/quarantine` | Filtered mail: rescue, dismiss, block sender |
+| `/?mock=1&email=off` | Before opting in to email capture |
 | `/?mock=1&notion=broken` | Notion access revoked — the reconnect prompts in the topbar, account menu, and confirm |
 
 The fixture workspace deliberately includes a database with no `notes` property and an unwritable `status` property, so the dropped-fields notice and the excluded-property behavior are both reachable.
@@ -171,6 +187,19 @@ All three of the `NOTION_OAUTH_*` variables, or none. Partial configuration is a
 | `SMTP_USERNAME` | | — | |
 | `SMTP_PASSWORD` | | — | |
 | `SMTP_FROM` | | `ziga@localhost` | From address on outbound mail |
+
+**Email ingestion** — a private capture address per user. All-or-nothing: setting some but not all of the first four refuses to boot, because a domain with no shared secret would mount an ingestion endpoint with nothing to authenticate against, and a secret with no Cloudflare credentials would hand users an address no mail can reach. Leave them all unset and the feature is simply not offered.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `INBOUND_EMAIL_DOMAIN` | for ingestion | — | The subdomain capture addresses live on, e.g. `in.zigadata.com`. Enable Cloudflare Email Routing on **this subdomain specifically** — it does not inherit the apex's config, and it adds MX records to the subdomain only, so the apex's own mail is untouched |
+| `INGEST_SHARED_SECRET` | for ingestion | — | Keys the HMAC on `POST /api/ingest/email`. Must match `ZIGA_INGEST_SECRET` in the Worker and be ≥32 chars — a short one is a boot error, not a warning |
+| `CLOUDFLARE_API_TOKEN` | for ingestion | — | Scoped token with Zone → Email Routing Rules → Edit. Used to create one routing rule per address (there is no catch-all on a subdomain) |
+| `CLOUDFLARE_ZONE_ID` | for ingestion | — | The zone the inbound domain belongs to |
+| `INGEST_WORKER_NAME` | | `ziga-email-ingest` | The Worker mail is routed to |
+| `INGEST_DAILY_CAP` | | `50` | Per-user extractions per day from email. The primary bound on the model bill |
+| `INGEST_BURST` | | `10` | Short-window burst allowance per user and per address |
+| `INGEST_MAX_ADDRESSES` | | `180` | How many capture addresses may exist at once. Kept under Cloudflare's 200-rules-per-domain cap so provisioning fails with our message rather than theirs |
 
 **Dev/test only** — the legacy shared service-account writer. Ignored once `GOOGLE_OAUTH_CLIENT_ID` is set. See the collapsed section above.
 
@@ -336,6 +365,26 @@ Every unsafe method carries CSRF. Routes marked 🔒 require a session and opera
 | `GET /api/destination` | the user's active destination plus the alternatives, for the picker. An alternative is marked `unavailable` when this server has no connection configured for it |
 | `GET /api/history` | last 50 written submissions |
 
+**Email ingestion** (mounted only when ingestion is configured; otherwise these routes do not exist).
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/ingest/email` | The mail Worker's delivery. **No session and no CSRF** — see below |
+| `GET /api/inbound` | The user's capture address, or `enabled:false` before opt-in |
+| `POST /api/inbound/enable` | Provision the address and its routing rule |
+| `POST /api/inbound/rotate` | Issue a new address; the old one keeps routing for a two-week grace period |
+| `GET /api/quarantine` | Filtered mail. `?status=verification` narrows to pending forwarding handshakes |
+| `POST /api/quarantine/{id}/rescue` | Re-extract a filtered message into the review queue |
+| `POST /api/quarantine/{id}/dismiss` | Close it without extracting |
+| `GET/POST /api/senders/blocked`, `/block`, `/unblock` | Per-user sender blocklist |
+| `POST /api/queue/seen` | Resets the "captured while you were away" count |
+
+`POST /api/ingest/email` is registered **bare on the mux — deliberately, and tested**. Its caller is a mail Worker, not a browser: there is no session to require and no cookie for a CSRF token to defend. It authenticates with an HMAC-SHA256 signature over the exact request body plus a timestamp header, constant-time compared, with a five-minute skew window.
+
+Its rate limit is keyed by **inbound address and user id, never by IP**. All ingestion traffic arrives from one upstream, so a per-IP budget would be a single bucket shared by every tenant — and `clientIP` trusts `X-Forwarded-For`, which is *also a real email header*, so the Worker sends message headers only inside the JSON body. The address-keyed limit is applied before the database lookup, so probing for live addresses is throttled at the same rate as real mail.
+
+Unknown, retired, unprovisioned and wrong-domain recipients all return a byte-identical `202` and write nothing, so none of them is distinguishable from outside.
+
 `GET /healthz` is the unauthenticated liveness probe.
 
 `status` is `pending` / `written` / `failed_write` / `discarded`. `/api/submit` (LLM cost) and `/api/submissions/{id}/confirm` (destination API quota) share one per-IP rate-limit budget (`RATE_LIMIT_PER_MIN`).
@@ -374,7 +423,20 @@ The migration guarantees are load-bearing and tested as such:
 
 On the Notion side: `internal/notionauth` (the consent URL shape, that no scope is ever requested, and that the client secret travels in the HTTP Basic header rather than the body), `internal/notion` (mapping across property types, case-sensitivity, partial writes with reported dropped fields, select-option creation, `Notion-Version` on every request, 429 backoff, and 404-as-permission), and `internal/httpapi/notion_oauth_test.go` / `notion_setup_test.go` (the connect flow, encrypted-token round trip, the mapping and destination endpoints, the revoked-access reconnect path, and Notion destination isolation).
 
-For a live end-to-end check, run the server and try: a normal lead, one containing "ignore previous instructions…", a two-lead message, and a non-English lead.
+On the email ingestion side, the pipeline is a pure package (no store, no LLM client, no `net/http`), so a **fixture corpus** is most of its test surface. `internal/ingest/testdata/corpus/` holds 25 realistic messages as `.eml` / `.json` / `.want.json` triples — see the README there for the contract, and `go test ./internal/ingest/ -run TestCorpus -update` to regenerate the goldens after a deliberate change. It is this repo's first `testdata/`.
+
+The corpus is a **cross-language contract**. Go never parses the `.eml` (a second MIME parser would have its own bugs); instead `worker/email-ingest/test/parse.test.ts` reads the same files and asserts the Worker's payload builder reproduces the committed `.json`. Likewise `internal/ingest/hmac_test.go` and `worker/email-ingest/test/sign.test.ts` pin the *same* HMAC known-answer vector: the two implementations otherwise drift silently, and the failure is total — every lead stops arriving with nothing but 401s to show for it.
+
+The properties that are easy to get wrong, and are therefore asserted directly:
+
+- `TestExtractorSingleCallSite` parses this package's AST and fails if anything other than `ingestLead` calls the extractor. The filter pipeline is a cost control, and a cost control with a second door is not a control. Verified to fail on a planted call site.
+- `TestAutoForwardTrustsTheFromHeader` — Gmail auto-forward *preserves* the original `From:` and adds `X-Forwarded-*` headers containing the **user's own** addresses. Reading the identity out of those headers would file every auto-forwarded lead under the user's own mailbox, and the rows would look entirely normal.
+- `TestVerificationOutranksTheMachineFilter` asserts its own premise (that the machine filter really would catch a confirmation from `forwarding-noreply@google.com`) before asserting the ordering, so it cannot quietly stop testing anything.
+- `TestFakeConfirmationIsNeverSurfacedAsVerification` — detection requires the real sender, never body text, or we would render an attacker's code and link inside our own UI.
+- `TestPastePathUnchanged` pins the pasted-submission prompt byte for byte, so email work cannot regress the flow every existing user relies on.
+- `TestIngestionDataIsolation` drives a real signed delivery and asserts the captured lead belongs to exactly one tenant and is invisible to the other.
+
+For a live end-to-end check, run the server and try: a normal lead, one containing "ignore previous instructions…", a two-lead message, and a non-English lead. The frontend equivalent for ingestion is `?mock=1` — see below.
 
 ## Deployment
 
@@ -471,12 +533,20 @@ Deliberately out of scope for now:
 
 Deliberately out of scope for the Notion destination pass:
 
-- **Email ingestion** — a separate later pass; nothing in this one touches it.
 - **Multi-destination fan-out** — writing one lead to both Sheets *and* Notion. A user has exactly one active destination; switching replaces it. The destination model is a single row per user, so fan-out means a schema change, not just a loop.
 - **Airtable / HubSpot** — the writer interface now has two implementations and adding a third is additive, but none is planned yet.
 - **Attachments** — the submitted image is never uploaded to the destination, on either provider.
 - **Notion `status` properties** — they are excluded from mapping and rejected if chosen manually, because the API cannot add options to them, so a lead with an unseen value would be unwritable.
 - **Multiple data sources per Notion database** — a database with more than one data source writes to the first. Choosing among them is not offered.
+
+Deferred from the email ingestion pass:
+
+- **Attachments and image extraction** — the Worker sends attachment metadata but no bytes, so a lead that exists only inside a PDF or a photo is quarantined as `no_text` rather than read. The payload has room for content when this lands.
+- **Auto-write of high-confidence leads** — the automation ladder comes later, as an opt-in per-user setting. Today every ingested lead waits for a human exactly like a pasted one.
+- **Webhook / form ingestion** and a **Chrome extension** — other capture channels; `ingestLead` is already the shared path they would use.
+- **Multiple inbound addresses per user** — one active address, with rotation.
+- **Localised forward markers** — German/French/Italian Outlook (`Von:`, `De:`, `Da:`) are not parsed. Such a message falls through with low confidence, which raises a review-pane flag rather than silently attributing the lead to the forwarder.
+- **Queue pagination under an email burst** — `/api/queue` returns the newest 100, so a large capture day could push older pasted leads off the review queue. The daily cap bounds this for now.
 
 Deferred from the multi-tenant auth pass:
 
@@ -489,5 +559,6 @@ Deferred from the multi-tenant auth pass:
 
 ## Changelog
 
+- 2026-08 — **Email ingestion**: a private capture address per user, a Cloudflare Email Worker, an HMAC-authenticated ingestion endpoint, a filter pipeline that runs before any model call, forwarded-email sender attribution, and a quarantine view that makes "never silently lost" checkable
 - 2026-08 — **Notion** joins Google Sheets as a lead destination; the per-user destination model is generalized behind a writer interface, with existing Sheets users migrated in place
 - 2026-07 — renamed to **Ziga Data** (formerly sheetdrop)

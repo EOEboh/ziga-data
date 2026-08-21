@@ -1,0 +1,16 @@
+{
+  "decision": "accept",
+  "text_prefix": "---------- Forwarded message --------- From: Halima Yusuf \u003chalima@yusuf-textiles",
+  "text_runes": 592,
+  "origin": {
+    "sender": "halima@yusuf-textiles.com",
+    "subject": "Re: Following up on your brochure",
+    "forwarded": true,
+    "method": "body:gmail",
+    "confidence": "high",
+    "chose": "earliest-not-self",
+    "thread_count": 2,
+    "text_prefix": "Yes please — we'd want 500 brochures printed for our showroom, and pos",
+    "signature_kept": true
+  }
+}
