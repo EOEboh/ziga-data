@@ -28,18 +28,25 @@ creates one literal-match routing rule per address through the Cloudflare API
 ```sh
 npm ci
 npm test
+npx wrangler login                           # interactive; opens a browser
 npx wrangler deploy
 npx wrangler secret put ZIGA_INGEST_SECRET   # must equal INGEST_SHARED_SECRET
+npx wrangler secret put FALLBACK_ADDRESS     # a VERIFIED destination address
 ```
+
+Secrets go in **after** the first deploy — there is nothing to attach them to
+before that. They survive later redeploys, unlike `vars`, which are replaced
+from `wrangler.jsonc` every time.
 
 `ZIGA_INGEST_SECRET` is a **secret**, never a var, and never committed. If it
 drifts from `INGEST_SHARED_SECRET` in `/opt/ziga/ziga.env`, every delivery 401s
 and leads stop arriving with no other symptom — check the app log for 401s
 first when triaging.
 
-Set `FALLBACK_ADDRESS` in `wrangler.jsonc` to a **verified destination address**
-on the account before deploying. `forward()` throws on an unverified address,
-which turns the safety net into a second failure.
+`FALLBACK_ADDRESS` is a **secret, not a var** — it is a real person's mailbox
+and this repository is public, so a var would put it in git history forever. It
+must be a **verified destination address** on the account: `forward()` throws
+on an unverified one, which turns the safety net into a second failure.
 
 Full setup, including enabling Email Routing on the subdomain, is in
 `deploy/RUNBOOK.md` §k.

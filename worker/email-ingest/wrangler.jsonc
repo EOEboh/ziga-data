@@ -15,15 +15,19 @@
     // extracts text only, so a large message is a large attachment we cannot
     // use. Oversized mail is reported to Ziga as a quarantine event rather
     // than rejected — see src/index.ts.
-    "MAX_RAW_BYTES": "2097152",
-
-    // A VERIFIED destination address on this Cloudflare account. Receives mail
-    // we could not deliver to Ziga, so an outage delays leads instead of
-    // losing them. forward() throws if the address is not verified, so verify
-    // it before deploying (runbook §k). Empty disables the fallback and
-    // degrades to a loud log.
-    "FALLBACK_ADDRESS": ""
+    "MAX_RAW_BYTES": "2097152"
   }
+
+  // FALLBACK_ADDRESS is a SECRET, not a var:
+  //   wrangler secret put FALLBACK_ADDRESS
+  //
+  // It is a real person's mailbox, and this repository is public — a var
+  // lives in this file and therefore in git history forever. A secret is set
+  // once, survives redeploys, and never lands in the repo.
+  //
+  // It must be a VERIFIED destination address on the account: forward()
+  // throws otherwise, which would turn the safety net into a second failure.
+  // Unset, the fallback degrades to a loud log (see src/index.ts).
 
   // ZIGA_INGEST_SECRET is a secret, not a var:
   //   wrangler secret put ZIGA_INGEST_SECRET

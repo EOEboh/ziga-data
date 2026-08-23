@@ -9,10 +9,11 @@ export interface Env {
   MAX_RAW_BYTES: string;
   /**
    * A verified destination address that receives mail we could not deliver to
-   * Ziga. Empty disables the fallback, which degrades to a loud log — see the
-   * end of email().
+   * Ziga. Set as a wrangler SECRET rather than a var: it is a real mailbox and
+   * this repository is public. Optional because unset is a supported (if
+   * degraded) state — the fallback becomes a loud log; see the end of email().
    */
-  FALLBACK_ADDRESS: string;
+  FALLBACK_ADDRESS?: string;
 }
 
 /** Cloudflare's own inbound ceiling, for context in the size check below. */

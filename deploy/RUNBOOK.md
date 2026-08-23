@@ -689,8 +689,15 @@ revert: the marketing domain's mail is now going somewhere else.
 
 3. Verify a **destination address** for the Worker's fallback (Email →
    Destination addresses). `forward()` throws on an unverified address, which
-   would turn the safety net into a second failure. `wrangler.jsonc`'s
-   `FALLBACK_ADDRESS` must be exactly this verified address.
+   would turn the safety net into a second failure.
+
+   Reusing whatever `support@zigadata.com` already forwards to is the easy
+   choice: it is verified by definition and it is a mailbox someone watches,
+   which is the entire point of a fallback.
+
+   It is set as a **secret**, not a var (see k.4) — it is a real person's
+   mailbox and this repository is public, so a var in `wrangler.jsonc` would
+   put it in git history permanently.
 
 ### k.3 Two Cloudflare API tokens — not one
 
