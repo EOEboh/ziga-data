@@ -37,10 +37,11 @@ func TestCreateAddressRuleShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The rules API addresses a rule by its tag, so that is what we must store
-	// — an id we cannot delete with is a leaked rule.
-	if id != "tag-1" {
-		t.Errorf("rule id = %q, want the tag", id)
+	// The delete path is /rules/{id}, so the id is what must be stored — an
+	// identifier we cannot delete with is a leaked rule, out of a capped pool.
+	// See TestCreateAddressRuleStoresTheDeletableIdentifier.
+	if id != "id-1" {
+		t.Errorf("rule id = %q, want the id", id)
 	}
 	if gotPath != "/zones/zone-1/email/routing/rules" {
 		t.Errorf("path = %q", gotPath)
@@ -179,5 +180,40 @@ func TestListRulesExtractsRecipients(t *testing.T) {
 	// must not invent one for it.
 	if rules[1].Address != "" {
 		t.Errorf("non-literal rule reported address %q", rules[1].Address)
+	}
+}
+
+// TestCreateAddressRuleStoresTheDeletableIdentifier pins which of the two
+// identifiers Cloudflare returns we keep.
+//
+// The delete path is /rules/{id}. Storing the tag instead would make
+// DeleteRule 404, and because an absent rule is treated as already-deleted,
+// the real rule would be leaked in silence — permanently, out of a pool capped
+// per domain. So this asserts we keep the id even when a tag is present and
+// looks equally plausible.
+func TestCreateAddressRuleStoresTheDeletableIdentifier(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"success":true,"errors":[],"result":
+			{"id":"the-id","tag":"the-tag","enabled":true}}`)
+	})
+	got, err := c.CreateAddressRule(context.Background(), "lead-x@in.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "the-id" {
+		t.Fatalf("stored %q, want the id — the delete path is /rules/{id}, so a tag here leaks the rule", got)
+	}
+}
+
+func TestCreateAddressRuleFallsBackToTag(t *testing.T) {
+	// Defensive: if a response ever omits id, a tag is better than nothing.
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"success":true,"errors":[],"result":{"tag":"only-a-tag","enabled":true}}`)
+	})
+	got, err := c.CreateAddressRule(context.Background(), "lead-x@in.example.com")
+	if err != nil || got != "only-a-tag" {
+		t.Fatalf("got %q err=%v, want the tag as a fallback", got, err)
 	}
 }
