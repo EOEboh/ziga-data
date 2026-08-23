@@ -125,14 +125,19 @@ func (c *Client) CreateAddressRule(ctx context.Context, address string) (string,
 	if err := json.Unmarshal(raw, &rule); err != nil {
 		return "", fmt.Errorf("decode created rule: %w", err)
 	}
-	if rule.Tag == "" && rule.ID == "" {
+	if rule.ID == "" && rule.Tag == "" {
 		return "", fmt.Errorf("cloudflare accepted the rule but returned no identifier")
 	}
-	// The rules API addresses a rule by its tag; id is returned alongside it.
-	if rule.Tag != "" {
-		return rule.Tag, nil
+	// Prefer id: the delete path is /rules/{id}, which wrangler and the API
+	// reference agree on. The response also carries a tag, and picking that
+	// instead is a trap — the two can differ, DeleteRule would then 404, and
+	// because an absent rule is (correctly) treated as already-deleted, the
+	// real rule would be leaked silently. Rules are capped per domain, so a
+	// leak is capacity lost for good.
+	if rule.ID != "" {
+		return rule.ID, nil
 	}
-	return rule.ID, nil
+	return rule.Tag, nil
 }
 
 // DeleteRule releases a routing rule. A rule that is already gone is treated

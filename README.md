@@ -194,7 +194,7 @@ All three of the `NOTION_OAUTH_*` variables, or none. Partial configuration is a
 |---|---|---|---|
 | `INBOUND_EMAIL_DOMAIN` | for ingestion | — | The subdomain capture addresses live on, e.g. `in.zigadata.com`. Enable Cloudflare Email Routing on **this subdomain specifically** — it does not inherit the apex's config, and it adds MX records to the subdomain only, so the apex's own mail is untouched |
 | `INGEST_SHARED_SECRET` | for ingestion | — | Keys the HMAC on `POST /api/ingest/email`. Must match `ZIGA_INGEST_SECRET` in the Worker and be ≥32 chars — a short one is a boot error, not a warning |
-| `CLOUDFLARE_API_TOKEN` | for ingestion | — | Scoped token with Zone → Email Routing Rules → Edit. Used to create one routing rule per address (there is no catch-all on a subdomain) |
+| `CLOUDFLARE_API_TOKEN` | for ingestion | — | Scoped token with Zone → Email Routing Rules → Edit. Used to create one routing rule per address (there is no catch-all on a subdomain). **Not** the same token as the Worker deploy's, which needs Account → Workers Scripts → Edit |
 | `CLOUDFLARE_ZONE_ID` | for ingestion | — | The zone the inbound domain belongs to |
 | `INGEST_WORKER_NAME` | | `ziga-email-ingest` | The Worker mail is routed to |
 | `INGEST_DAILY_CAP` | | `50` | Per-user extractions per day from email. The primary bound on the model bill |
