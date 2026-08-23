@@ -11,6 +11,8 @@ export function ComposeBox({
   onTextChange,
   onFileChange,
   onSubmit,
+  onCancel,
+  rerunning = false,
   emailIngest = false,
 }: {
   text: string;
@@ -19,6 +21,14 @@ export function ComposeBox({
   onTextChange: (text: string) => void;
   onFileChange: (file: File | null) => void;
   onSubmit: () => void;
+  onCancel?: () => void;
+  /**
+   * Editing an existing submission rather than composing a new one. The
+   * original stays in the queue untouched until a re-run succeeds, so backing
+   * out here loses nothing — the copy says so, because otherwise it looks like
+   * abandoning the edit might abandon the lead.
+   */
+  rerunning?: boolean;
   /** Show the email-capture hint. Discovery belongs here, where the user is
       already thinking about getting a lead in — the account menu is where
       they come back to it. */
@@ -39,7 +49,11 @@ export function ComposeBox({
 
   return (
     <div className="bg-surface border border-line rounded-card p-4 max-w-[560px] my-12 mx-auto text-center">
-      <p className="text-text-2 m-0 mb-4">Paste a lead, forward an email, or drop a screenshot.</p>
+      <p className="text-text-2 m-0 mb-4">
+        {rerunning
+          ? "Edit the original text and extract again. The lead stays in your queue until this succeeds."
+          : "Paste a lead, forward an email, or drop a screenshot."}
+      </p>
       {submitError !== null && <p className="text-red-text text-[13px] m-0 mb-4">{submitError}</p>}
       <textarea
         className="w-full min-h-[140px] resize-y font-mono text-[13px] text-text bg-surface border border-line rounded-ctl p-3 focus:outline-none focus:border-green"
@@ -61,6 +75,11 @@ export function ComposeBox({
         <Button variant="primary" onClick={onSubmit}>
           Extract fields
         </Button>
+        {onCancel && (
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
       </div>
       {emailIngest && (
         <p className="text-text-2 text-xs mt-4 pt-4 border-t border-line m-0">

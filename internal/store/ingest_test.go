@@ -553,3 +553,44 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("data must survive the second migrate: got=%v err=%v", got, err)
 	}
 }
+
+// TestDiscardFreesTheMessageIDToo mirrors the content-hash tombstone.
+//
+// Discard rewrites content_hash so the same content can genuinely be
+// resubmitted. The Message-ID lookup has to agree, or an email lead the user
+// discards can never be captured again: the hash is freed but the Message-ID
+// goes on matching forever, and a second forward of that message vanishes with
+// nothing for the user to find. The non-unique index in migrate() was chosen
+// for exactly this reason; this is the half that makes it real.
+func TestDiscardFreesTheMessageIDToo(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	since := now.Add(-time.Hour)
+
+	sub := &Submission{
+		UserID: u1, ContentHash: "mid-discard", Status: StatusPending,
+		Source: SourceEmail, MessageID: "<again@mail>",
+	}
+	if _, err := st.Insert(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// While it is live, a redelivery is correctly deduped.
+	if got, err := st.FindByMessageID(ctx, u1, "<again@mail>", since); err != nil || got == nil {
+		t.Fatalf("a live submission must still dedup redelivery: %v %v", got, err)
+	}
+
+	if err := st.Discard(ctx, u1, sub.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Once discarded, forwarding it again must get through.
+	got, err := st.FindByMessageID(ctx, u1, "<again@mail>", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("a discarded lead still blocks its Message-ID (matched id %d), so re-forwarding it would silently vanish", got.ID)
+	}
+}

@@ -32,6 +32,15 @@ export class ApiError extends Error {
 // backend running; nothing outside createApi knows which one is live.
 export interface Api {
   submit(form: FormData): Promise<Submission>;
+  /**
+   * Re-extract an existing submission from corrected input, replacing it.
+   *
+   * Not the same as submit(): the server carries the original's provenance
+   * (source, sender, subject) onto the replacement. Re-submitting as a plain
+   * paste would turn an email-captured lead into a pasted one and lose the
+   * sender for good.
+   */
+  rerun(id: number, form: FormData): Promise<Submission>;
   confirm(id: number, fields: Record<string, string>): Promise<ConfirmResponse>;
   discard(id: number): Promise<void>;
   queue(): Promise<QueueResponse>;
@@ -113,6 +122,9 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
 class HttpApi implements Api {
   submit(form: FormData): Promise<Submission> {
     return request<Submission>("/api/submit", { method: "POST", body: form });
+  }
+  rerun(id: number, form: FormData): Promise<Submission> {
+    return request<Submission>(`/api/submissions/${id}/rerun`, { method: "POST", body: form });
   }
   confirm(id: number, fields: Record<string, string>): Promise<ConfirmResponse> {
     return request<ConfirmResponse>(`/api/submissions/${id}/confirm`, {
