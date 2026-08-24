@@ -121,6 +121,16 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
     }
   }
 
+  // cancelCompose backs out of the paste box. During a re-run the original is
+  // still in the queue untouched — it is only replaced once a new extraction
+  // succeeds — so this is a genuine escape hatch, not a partial undo.
+  async function cancelCompose(): Promise<void> {
+    dispatch({ type: "RERUN_CLEARED" });
+    dispatch({ type: "COMPOSE_CLEARED" });
+    dispatch({ type: "COMPOSING_ENDED" });
+    await advance();
+  }
+
   async function startExtraction(): Promise<void> {
     const s = stateRef.current;
     const text = s.composeText.trim();
@@ -157,7 +167,10 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
 
     let sub: Submission;
     try {
-      sub = await api.submit(form);
+      // A re-run goes to its own endpoint so the server can carry the
+      // original's provenance onto the replacement and discard it atomically.
+      // Submitting as a plain paste would strip an email lead's sender.
+      sub = rerunOf !== null ? await api.rerun(rerunOf, form) : await api.submit(form);
     } catch (err) {
       dispatch({
         type: "EXTRACTION_FAILED",
@@ -166,14 +179,11 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
       return;
     }
 
-    // The re-run replaced the original: discard it, unless the server deduped
-    // us onto an existing submission (unchanged content returns the old row —
-    // discarding it would destroy the very submission we are now showing).
+    // The server replaced the original as part of the re-run; there is no
+    // client-side discard to do, and no window where a failed discard could
+    // leave two copies of the same lead in the queue.
     if (rerunOf !== null) {
       dispatch({ type: "RERUN_CLEARED" });
-      if (!sub.duplicate && sub.id !== rerunOf) {
-        await api.discard(rerunOf).catch(() => {});
-      }
     }
 
     // If the user hit "New lead" while this extraction was in flight, leave
@@ -375,6 +385,8 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
                 onTextChange={(text) => dispatch({ type: "SET_COMPOSE_TEXT", text })}
                 onFileChange={(file) => dispatch({ type: "SET_COMPOSE_FILE", file })}
                 onSubmit={startExtraction}
+                onCancel={cancelCompose}
+                rerunning={state.rerunOf !== null}
                 emailIngest={emailIngest}
               />
             )}

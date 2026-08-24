@@ -173,6 +173,8 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	// Submission app (protected + user-scoped).
 	mux.Handle("POST /api/submit", s.rateLimit(protected(s.handleSubmit)))
 	mux.Handle("POST /api/submissions/{id}/confirm", s.rateLimit(protected(s.handleConfirm)))
+	// Re-run costs an extraction, so it shares the submit/confirm budget.
+	mux.Handle("POST /api/submissions/{id}/rerun", s.rateLimit(protected(s.handleRerun)))
 	mux.Handle("POST /api/submissions/{id}/discard", protected(s.handleDiscard))
 	mux.Handle("GET /api/submissions/{id}/image", protected(s.handleImage))
 	mux.Handle("GET /api/queue", protected(s.handleQueue))

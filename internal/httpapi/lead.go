@@ -43,6 +43,12 @@ type leadInput struct {
 	// extraction (a truncated body, a low-confidence sender attribution).
 	// They are merged with the validator's own flags.
 	ExtraFlags []string
+	// ReplacesID is the submission this one supersedes, set when the user
+	// re-runs an extraction with corrected text. It suppresses the Message-ID
+	// check: the only row that check could match is the one being replaced,
+	// which is still present because it is not discarded until the new
+	// extraction has actually succeeded.
+	ReplacesID int64
 }
 
 // leadOutcome is what ingestLead did.
@@ -76,7 +82,7 @@ func (s *Server) ingestLead(ctx context.Context, in leadInput) (*leadOutcome, er
 	// the hash cannot: the hash buckets by calendar day, so a mail system
 	// redelivering the same message across midnight UTC hashes differently and
 	// would insert a second copy of one lead.
-	if in.MessageID != "" {
+	if in.MessageID != "" && in.ReplacesID == 0 {
 		since := in.Now.Add(-messageIDDedupWindow)
 		prior, err := s.store.FindByMessageID(ctx, in.UserID, in.MessageID, since)
 		if err != nil {

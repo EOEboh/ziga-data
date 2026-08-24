@@ -334,6 +334,31 @@ export class MockApi implements Api {
     this.pending.delete(id);
   }
 
+  /**
+   * Mirrors the server: the replacement inherits the original's provenance, so
+   * re-running an email-captured lead keeps its badge and sender rather than
+   * silently becoming a paste.
+   */
+  async rerun(id: number, form: FormData): Promise<Submission> {
+    await delay(900);
+    const orig = this.pending.get(id);
+    const fixture = fixtures[this.fixtureIdx++ % fixtures.length];
+    const sub: Submission = {
+      id: this.nextId++,
+      status: "pending",
+      result: JSON.parse(JSON.stringify(fixture.result)),
+      field_states: { ...fixture.field_states },
+      input: { text: String(form.get("text") ?? ""), has_image: form.get("image") instanceof File },
+      created_at: new Date().toISOString(),
+      source: orig?.source,
+      from_address: orig?.from_address,
+      subject: orig?.subject,
+    };
+    this.pending.delete(id);
+    this.pending.set(sub.id, sub);
+    return sub;
+  }
+
   async queue(): Promise<QueueResponse> {
     const items = [...this.pending.values()].reverse();
     return { count: items.length, items, captured_while_away: this.awayCount };

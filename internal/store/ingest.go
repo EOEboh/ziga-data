@@ -478,15 +478,21 @@ func (s *Store) EmailsToday(ctx context.Context, userID int64, since time.Time) 
 // This is the dedup that catches a mail system redelivering the same message:
 // the content hash buckets by calendar day, so a retry that crosses midnight
 // UTC hashes differently and would otherwise insert a second copy.
+//
+// Discarded submissions are excluded, mirroring how Discard tombstones the
+// content hash. Without that, discarding an email lead would silently block
+// the sender from ever being captured again on that message — the hash would
+// be freed but the Message-ID would go on matching forever, and the second
+// forward would vanish with no trace for the user to find.
 func (s *Store) FindByMessageID(ctx context.Context, userID int64, messageID string, since time.Time) (*Submission, error) {
 	if messageID == "" {
 		return nil, nil
 	}
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+submissionCols+` FROM submissions
-		WHERE user_id = ? AND message_id = ? AND created_at >= ?
+		WHERE user_id = ? AND message_id = ? AND created_at >= ? AND status != ?
 		ORDER BY id DESC LIMIT 1`,
-		userID, messageID, since.UTC().Format(time.RFC3339))
+		userID, messageID, since.UTC().Format(time.RFC3339), StatusDiscarded)
 	sub, err := scanSubmission(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
