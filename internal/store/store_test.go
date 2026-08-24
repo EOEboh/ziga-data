@@ -410,3 +410,91 @@ func TestMigrateOldSchema(t *testing.T) {
 		t.Fatalf("new row not readable by its owner: %+v", got)
 	}
 }
+
+// TestListQueueIsOldestFirst pins the one listing here that inverts the usual
+// order.
+//
+// History reads newest-first: it is a record you scan backwards. A queue is
+// work, and the lead waiting longest is the one most at risk of going cold, so
+// it must surface rather than sink under whatever arrived this morning.
+//
+// The inversion only became visible with email ingestion. While every lead was
+// pasted there was effectively one at a time, so newest-first and
+// only-one-anyway were indistinguishable.
+func TestListQueueIsOldestFirst(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	var ids []int64
+	for _, h := range []string{"first", "second", "third"} {
+		sub := &Submission{UserID: u1, ContentHash: h, Status: StatusPending}
+		if _, err := st.Insert(ctx, sub); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, sub.ID)
+	}
+
+	got, err := st.ListQueue(ctx, u1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 queued, got %d", len(got))
+	}
+	if got[0].ID != ids[0] {
+		t.Errorf("first item is id %d, want the OLDEST (%d) — newest-first buries the lead that has waited longest",
+			got[0].ID, ids[0])
+	}
+	if got[2].ID != ids[2] {
+		t.Errorf("last item is id %d, want the newest (%d)", got[2].ID, ids[2])
+	}
+
+	// History keeps the opposite order, deliberately.
+	if _, err := st.Insert(ctx, &Submission{UserID: u1, ContentHash: "w1", Status: StatusWritten}); err != nil {
+		t.Fatal(err)
+	}
+	w2 := &Submission{UserID: u1, ContentHash: "w2", Status: StatusWritten}
+	if _, err := st.Insert(ctx, w2); err != nil {
+		t.Fatal(err)
+	}
+	hist, err := st.ListByStatus(ctx, u1, StatusWritten, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 || hist[0].ID != w2.ID {
+		t.Errorf("history must stay newest-first; got first id %v", hist[0].ID)
+	}
+}
+
+func TestListQueueScopedAndFiltered(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+
+	mine := &Submission{UserID: u1, ContentHash: "q-mine", Status: StatusPending}
+	failed := &Submission{UserID: u1, ContentHash: "q-failed", Status: StatusFailedWrite}
+	written := &Submission{UserID: u1, ContentHash: "q-written", Status: StatusWritten}
+	theirs := &Submission{UserID: u2, ContentHash: "q-theirs", Status: StatusPending}
+	for _, s := range []*Submission{mine, failed, written, theirs} {
+		if _, err := st.Insert(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := st.ListQueue(ctx, u1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A failed write still needs the user, so it belongs in the queue; a
+	// written one is done; another tenant's is invisible.
+	if len(got) != 2 {
+		t.Fatalf("want pending + failed_write for this user only, got %d: %+v", len(got), got)
+	}
+	for _, s := range got {
+		if s.UserID != u1 {
+			t.Errorf("queue leaked another tenant's submission: %+v", s)
+		}
+		if s.Status == StatusWritten || s.Status == StatusDiscarded {
+			t.Errorf("settled submission in the queue: %+v", s)
+		}
+	}
+}
