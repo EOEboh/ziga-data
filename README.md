@@ -527,7 +527,7 @@ equivalent and why the ports differ.
 
 Deliberately out of scope for now:
 
-- Queue navigation (prev/next between queued items; today the review pane auto-advances FIFO)
+- Queue prev/next (stepping through waiting leads without returning to the list; the queue list itself now shows everything waiting, oldest first, and any item can be opened directly)
 - Multi-lead extraction (splitting one paste into several rows; today only the primary lead is extracted and a banner is shown)
 - History depth (pagination/search beyond the last 50 written submissions)
 

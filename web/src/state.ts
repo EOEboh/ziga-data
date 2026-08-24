@@ -48,6 +48,10 @@ export interface AppState {
   // green-tint settle fade on its last row.
   settleToken: number;
   queueCount: number;
+  // Everything awaiting review, oldest first — what the queue list renders.
+  // A count alone is not a queue: it says three things are waiting without
+  // letting the user reach any but the first.
+  queue: Submission[];
   // Outstanding filtered messages, for the Quarantine nav badge.
   quarantineCount: number;
   // Leads captured by email since the queue was last opened. Drives the
@@ -86,6 +90,7 @@ export const initialState: AppState = {
   preview: null,
   settleToken: 0,
   queueCount: 0,
+  queue: [],
   quarantineCount: 0,
   awayCount: 0,
   submitError: null,
@@ -97,6 +102,7 @@ export const initialState: AppState = {
 export type Action =
   | { type: "ROUTE"; route: Route }
   | { type: "BADGE"; count: number }
+  | { type: "QUEUE_LOADED"; items: Submission[] }
   | { type: "QUARANTINE_BADGE"; count: number }
   | { type: "AWAY_COUNT"; count: number }
   | { type: "AWAY_DISMISSED" }
@@ -130,6 +136,9 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "BADGE":
       return { ...state, queueCount: action.count };
+
+    case "QUEUE_LOADED":
+      return { ...state, queue: action.items, queueCount: action.items.length };
 
     case "QUARANTINE_BADGE":
       return { ...state, quarantineCount: action.count };

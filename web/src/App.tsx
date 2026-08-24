@@ -10,6 +10,7 @@ import { ComposeBox } from "./components/ComposeBox";
 import { HistoryView } from "./components/HistoryView";
 import { AwayBanner } from "./components/AwayBanner";
 import { QuarantineView } from "./components/QuarantineView";
+import { QueueList } from "./components/QueueList";
 import { ForwardingSetup } from "./components/ForwardingSetup";
 import { DroppedFieldsNotice } from "./components/DroppedFieldsNotice";
 import { PreviewStrip } from "./components/PreviewStrip";
@@ -34,7 +35,7 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
   async function refreshBadge(): Promise<void> {
     try {
       const q = await api.queue();
-      dispatch({ type: "BADGE", count: q.count });
+      dispatch({ type: "QUEUE_LOADED", items: q.items });
       dispatch({ type: "AWAY_COUNT", count: q.captured_while_away ?? 0 });
     } catch {
       dispatch({ type: "BADGE", count: 0 });
@@ -70,8 +71,10 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
     let next: Submission | null = null;
     try {
       const q = await api.queue();
-      dispatch({ type: "BADGE", count: q.count });
+      dispatch({ type: "QUEUE_LOADED", items: q.items });
       dispatch({ type: "AWAY_COUNT", count: q.captured_while_away ?? 0 });
+      // items[0] is the OLDEST now: settling one advances to whatever has been
+      // waiting longest, rather than to whatever happens to have just arrived.
       next = q.items[0] ?? null;
     } catch {
       dispatch({ type: "BADGE", count: 0 });
@@ -129,6 +132,14 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
     dispatch({ type: "COMPOSE_CLEARED" });
     dispatch({ type: "COMPOSING_ENDED" });
     await advance();
+  }
+
+  // selectFromQueue opens a specific waiting lead. Nothing is settled and
+  // nothing is lost — it is only a change of which one is on screen.
+  function selectFromQueue(sub: Submission): void {
+    dispatch({ type: "RERUN_CLEARED" });
+    dispatch({ type: "COMPOSING_ENDED" });
+    dispatch({ type: "ENTER_REVIEW", submission: sub });
   }
 
   async function startExtraction(): Promise<void> {
@@ -284,13 +295,13 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
             : { columns: [], rows: [], error: "preview unavailable" },
       });
       if (queueRes.status === "fulfilled") {
+        dispatch({ type: "QUEUE_LOADED", items: queueRes.value.items });
         dispatch({ type: "AWAY_COUNT", count: queueRes.value.captured_while_away ?? 0 });
       }
       if (queueRes.status === "fulfilled" && queueRes.value.items.length > 0) {
-        dispatch({ type: "BADGE", count: queueRes.value.count });
         dispatch({ type: "ENTER_REVIEW", submission: queueRes.value.items[0] });
       } else {
-        dispatch({ type: "BADGE", count: queueRes.status === "fulfilled" ? queueRes.value.count : 0 });
+        dispatch({ type: "BADGE", count: 0 });
         dispatch({ type: "ENTER_EMPTY" });
       }
       if (emailIngest) {
@@ -388,6 +399,13 @@ export function App({ me, reload }: { me: Me; reload: () => void }) {
                 onCancel={cancelCompose}
                 rerunning={state.rerunOf !== null}
                 emailIngest={emailIngest}
+              />
+            )}
+            {state.booted && !state.composing && state.phase !== "empty" && (
+              <QueueList
+                items={state.queue}
+                selectedId={state.submission?.id ?? null}
+                onSelect={selectFromQueue}
               />
             )}
             {state.booted && state.phase !== "empty" && (

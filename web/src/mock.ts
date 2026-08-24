@@ -181,11 +181,39 @@ const capturedLead: Submission = {
   subject: "Event branding — quick question",
 };
 
+// A second waiting lead, older than capturedLead, so ?mock=1 exercises the
+// queue list and its oldest-first ordering rather than the single-item case.
+const olderLead: Submission = {
+  id: 89,
+  status: "pending",
+  result: {
+    name: "Tunde Bello",
+    contact: "tunde.bello@brightpath.ng",
+    source: "website form",
+    need: "Online store for a bakery, customers ordering cakes",
+    date: "2026-08-17",
+    notes: "Lagos based",
+    confidence: "high",
+    missing_fields: [],
+    multiple_leads_detected: false,
+  },
+  field_states: { name: "ok", contact: "ok", source: "ok", date: "ok", need: "ok", notes: "ok" },
+  input: { text: "I run a small bakery in Lagos and I need an online store.", has_image: false },
+  created_at: new Date(Date.now() - 2 * 86400_000).toISOString(),
+  source: "email",
+  from_address: "tunde.bello@brightpath.ng",
+  subject: "Website enquiry",
+};
+
 export class MockApi implements Api {
   private nextId = 100;
   private fixtureIdx = 0;
+  // Oldest first, matching the server's queue ordering.
   private pending = new Map<number, Submission>(
-    MOCK_EMAIL === "off" ? [] : [[capturedLead.id, capturedLead]],
+    MOCK_EMAIL === "off" ? [] : [
+      [olderLead.id, olderLead],
+      [capturedLead.id, capturedLead],
+    ],
   );
   private rows: string[][] = [
     ["2026-07-14", "Lena Fischer", "lena@fischer.dev", "referral", "API integration help", "", ""],
@@ -360,7 +388,10 @@ export class MockApi implements Api {
   }
 
   async queue(): Promise<QueueResponse> {
-    const items = [...this.pending.values()].reverse();
+    // Insertion order is oldest-first, matching store.ListQueue. It used to be
+    // reversed here, which is exactly the newest-first behaviour the server no
+    // longer has.
+    const items = [...this.pending.values()];
     return { count: items.length, items, captured_while_away: this.awayCount };
   }
 
