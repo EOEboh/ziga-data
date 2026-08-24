@@ -554,6 +554,38 @@ func (s *Store) PurgeInputs(ctx context.Context, cutoff time.Time) (int64, error
 	return res.RowsAffected()
 }
 
+// ListQueue returns the submissions awaiting action, OLDEST FIRST.
+//
+// The order is deliberately the opposite of every other listing here. History
+// reads newest-first because it is a record you scan backwards. A queue of
+// leads is work, and the lead that has been waiting longest is the one most at
+// risk of going cold — so it surfaces first rather than sinking under whatever
+// arrived this morning.
+//
+// This mattered less when every lead was pasted: you pasted one and reviewed
+// it immediately, so newest-first and only-one were the same thing. Email
+// ingestion made leads accumulate unattended, which is what exposed it.
+func (s *Store) ListQueue(ctx context.Context, userID int64, limit int) ([]Submission, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+submissionCols+`
+		FROM submissions WHERE user_id = ? AND status IN (?, ?)
+		ORDER BY id ASC LIMIT ?`,
+		userID, StatusPending, StatusFailedWrite, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Submission
+	for rows.Next() {
+		sub, err := scanSubmission(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *sub)
+	}
+	return out, rows.Err()
+}
+
 // ListByStatus returns the user's submissions in a given state, newest first.
 func (s *Store) ListByStatus(ctx context.Context, userID int64, status Status, limit int) ([]Submission, error) {
 	return s.ListByStatuses(ctx, userID, []Status{status}, limit)

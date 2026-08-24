@@ -12,11 +12,11 @@ import (
 const previewRows = 3
 
 // handleQueue lists submissions awaiting action (pending + failed_write),
-// newest first. Drives the top-bar badge and restores in-progress reviews
-// after a reload.
+// OLDEST FIRST — see store.ListQueue for why the queue inverts the ordering
+// every other listing uses. Drives the top-bar badge, the queue list, and
+// restoring an in-progress review after a reload.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.store.ListByStatuses(r.Context(), userID(r),
-		[]store.Status{store.StatusPending, store.StatusFailedWrite}, 100)
+	subs, err := s.store.ListQueue(r.Context(), userID(r), 100)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "internal error")
 		return
